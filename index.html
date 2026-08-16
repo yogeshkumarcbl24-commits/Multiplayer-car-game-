@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Never-Ending Card Drive</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div id="canvas-wrap"></div>
+
+<div class="hud">
+  <div class="vignette"></div>
+  <div class="scanline-top"></div>
+  <div id="impact-flash"></div>
+
+  <div class="brand">
+    <div class="mark">NEVER<em>·</em>ENDING CARD DRIVE</div>
+    <div class="tag">an infinite three.js racing joyride</div>
+  </div>
+
+  <div class="stats">
+    <div class="stat">
+      <div class="label">Speed</div>
+      <div class="value" id="stat-speed">000<small>km/h</small></div>
+    </div>
+    <div class="stat stat-gold">
+      <div class="label">Distance</div>
+      <div class="value" id="stat-distance">0<small>m</small></div>
+    </div>
+    <div class="stat stat-magenta">
+      <div class="label">Rank</div>
+      <div class="value" id="stat-rank">1/1</div>
+    </div>
+    <div class="stat">
+      <div class="label">Time</div>
+      <div class="value" id="stat-time">0:00</div>
+    </div>
+  </div>
+
+  <div class="health-wrap">
+    <div class="health-label">HP</div>
+    <div class="health-track"><div class="health-fill" id="health-fill"></div></div>
+  </div>
+
+  <div class="leaderboard" id="leaderboard" hidden>
+    <div class="leaderboard-title">Race Standings</div>
+    <div class="leaderboard-rows" id="leaderboard-rows"></div>
+  </div>
+
+  <div class="biome-tag">Now crossing: <span id="biome-name">Desert</span> &middot; <span id="daytime-name">Day</span></div>
+  <canvas class="lane-indicator" id="lane-canvas" width="64" height="64"></canvas>
+
+  <div class="controls-hint" id="hint">
+    <span><kbd>&larr;</kbd><kbd>&rarr;</kbd> steer</span>
+    <span>&middot;</span>
+    <span><kbd>&uarr;</kbd> gas</span>
+    <span>&middot;</span>
+    <span><kbd>&darr;</kbd> brake/reverse</span>
+    <span>&middot;</span>
+    <span><kbd>Space</kbd> fire</span>
+    <span>&middot;</span>
+    <span>ram opponents to bump them</span>
+  </div>
+
+  <div class="finish-toast" id="finish-toast" hidden>
+    <div class="finish-title">🏁 Finished!</div>
+    <div class="finish-time" id="finish-time"></div>
+  </div>
+</div>
+
+<div id="touch-controls" hidden>
+  <div class="touch-steer">
+    <button type="button" class="touch-btn" id="tb-left" aria-label="Steer left">&larr;</button>
+    <button type="button" class="touch-btn" id="tb-right" aria-label="Steer right">&rarr;</button>
+  </div>
+  <div class="touch-actions">
+    <button type="button" class="touch-btn touch-fire" id="tb-fire" aria-label="Fire">&#9679;</button>
+    <div class="touch-pedals">
+      <button type="button" class="touch-btn touch-gas" id="tb-gas" aria-label="Gas">&uarr;</button>
+      <button type="button" class="touch-btn touch-brake" id="tb-brake" aria-label="Brake">&darr;</button>
+    </div>
+  </div>
+</div>
+
+<div id="countdown-overlay" hidden>
+  <div id="countdown-num">3</div>
+</div>
+
+<div id="race-results" hidden>
+  <div class="results-panel">
+    <div class="results-title">🏁 Race Results</div>
+    <div class="results-rows" id="race-results-rows"></div>
+    <button id="race-again-btn" class="btn-primary">Race Again</button>
+  </div>
+</div>
+
+<div id="gate">
+  <div class="gate-inner">
+    <h1>The road <em>never ends</em> &mdash; so somebody has to win</h1>
+    <p class="gate-sub">Race a procedurally endless highway that curves and rolls through desert and hills. Create a room and share the code with friends on the same network, ram opponents or shoot your mounted gun to bump them off their line. Steer with the arrow keys, drag, or the on-screen controls on a phone &mdash; press gas to actually move.</p>
+
+    <div class="mp-panel">
+      <div class="mp-status" id="mp-status">Looking for a race server on this WiFi network&hellip;</div>
+
+      <div class="room-picker" id="room-picker" hidden>
+        <div class="mp-row">
+          <input type="text" id="player-name" class="name-input" maxlength="18" placeholder="Your racer name">
+          <div class="swatches" id="swatches"></div>
+        </div>
+        <button id="create-room-btn" class="btn-primary">Create Room</button>
+        <div class="room-join-row">
+          <input type="text" id="room-code-input" class="name-input room-code-input" maxlength="4" placeholder="CODE">
+          <button id="join-room-btn" class="btn-ghost room-join-btn">Join Room</button>
+        </div>
+        <div class="room-error" id="room-error" hidden></div>
+      </div>
+
+      <div class="mp-setup" id="mp-setup" hidden>
+        <div class="room-code-display">
+          Room <span class="room-code-value" id="room-code-label">----</span>
+          <button type="button" id="copy-room-btn" class="room-copy-btn">Copy link</button>
+          <span class="room-copied" id="room-copied" hidden>Copied!</span>
+        </div>
+        <div class="duration-row">
+          <span class="duration-label">Race length</span>
+          <div class="duration-chips" id="duration-chips"></div>
+        </div>
+        <div class="player-list" id="player-list"></div>
+        <button id="race-btn" class="btn-primary">Start Race</button>
+      </div>
+    </div>
+
+    <button id="start-btn" class="btn-ghost">Practice Solo</button>
+    <div class="gate-foot">Built with three.js &middot; runs entirely in your browser</div>
+  </div>
+</div>
+
+<script src="lib/three.min.js"></script>
+<script src="js/net.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

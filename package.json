@@ -1,0 +1,15 @@
+{
+  "name": "never-ending-card-drive",
+  "version": "1.1.0",
+  "description": "An infinite, procedurally curving three.js racing highway with hill/desert biomes, a day/night cycle, and local-WiFi multiplayer racing.",
+  "main": "index.html",
+  "scripts": {
+    "start": "python3 -m http.server 8000",
+    "server": "node server/server.js"
+  },
+  "dependencies": {
+    "three": "0.160.0",
+    "ws": "^8.21.3"
+  },
+  "license": "MIT"
+}
