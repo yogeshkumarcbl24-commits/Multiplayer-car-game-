@@ -811,10 +811,26 @@
     var dx = e.clientX - pointerStartX;
     pointerSteer = Math.max(-1, Math.min(1, dx / 140));
   });
-  window.addEventListener('pointerup', function(){
+  function releasePointerSteer(){
     pointerActive = false;
     pointerSteer = 0;
     input.boost = false;
+  }
+  window.addEventListener('pointerup', releasePointerSteer);
+  window.addEventListener('pointercancel', releasePointerSteer); // touch interrupted (e.g. an OS gesture) -- without
+                                                                  // this the drag can get stuck steering indefinitely
+
+  // Safety net: if the window loses focus or the tab is hidden while a key
+  // is held, the matching keyup can be lost entirely (common when
+  // alt-tabbing or switching apps), leaving the car turning/accelerating on
+  // its own forever. Clear every input the moment that happens.
+  function releaseAllInputs(){
+    input.left = false; input.right = false; input.boost = false; input.brake = false; input.fire = false;
+    releasePointerSteer();
+  }
+  window.addEventListener('blur', releaseAllInputs);
+  document.addEventListener('visibilitychange', function(){
+    if (document.hidden) releaseAllInputs();
   });
 
   var hintEl = document.getElementById('hint');
@@ -962,6 +978,22 @@
   ============================================================ */
   var MAX_SPEED = 34, MAX_REVERSE = -6;
   var ACCEL = 16, BRAKE_DECEL = 24, COAST_DRAG = 7;
+
+  // Catch-up: falling behind (a bad hit, a slow patch, whatever) shouldn't
+  // be a permanent loss with no way back. Trailing players get a modest,
+  // capped speed/accel bonus proportional to how far behind the current
+  // leader they are -- enough to claw back a gap, not so much that skill
+  // stops mattering. No-op in solo play (there's no one to be "behind").
+  var CATCHUP_MAX_BOOST = 8;
+  var CATCHUP_FULL_AT = 150;
+  function catchUpBoost(){
+    var leaderDist = worldDistance;
+    for (var rid in remotePlayers){
+      if (remotePlayers[rid].targetDist > leaderDist) leaderDist = remotePlayers[rid].targetDist;
+    }
+    var behind = leaderDist - worldDistance;
+    return behind > 0 ? Math.min(CATCHUP_MAX_BOOST, (behind / CATCHUP_FULL_AT) * CATCHUP_MAX_BOOST) : 0;
+  }
   var speed = 0;
   var prevSpeed = 0;
   var worldDistance = 0;
@@ -1370,10 +1402,13 @@
   function update(dt){
     prevSpeed = speed;
     var frozen = localFinished || exploded;
+    var boost = catchUpBoost();
+    var effMaxSpeed = MAX_SPEED + boost;
+    var effAccel = ACCEL + boost*0.6;
     if (frozen){
       speed = Math.max(0, speed - COAST_DRAG*1.4*dt);
     } else if (input.boost){
-      speed += ACCEL*dt;
+      speed += effAccel*dt;
     } else if (input.brake){
       speed -= BRAKE_DECEL*dt;
     } else if (speed > 0){
@@ -1381,7 +1416,7 @@
     } else if (speed < 0){
       speed = Math.min(0, speed + COAST_DRAG*dt);
     }
-    speed = Math.max(MAX_REVERSE, Math.min(MAX_SPEED, speed));
+    speed = Math.max(MAX_REVERSE, Math.min(effMaxSpeed, speed));
     var accel = (speed - prevSpeed) / Math.max(dt, 0.0001);
 
     var rawSteer = frozen ? 0 : ((input.right?1:0) - (input.left?1:0) + pointerSteer);
