@@ -800,10 +800,14 @@
     if (e.key === ' ' || e.key === 'Spacebar') input.fire = false;
   });
 
+  // Dragging on open canvas is *steering only*. Gas has its own explicit
+  // controls (keyboard Up, or the dedicated on-screen Gas button) -- it used
+  // to also get toggled by this drag gesture, which meant releasing any
+  // unrelated touch/click anywhere on the page (to steer, say) would stomp
+  // input.boost back to false and cut your gas mid-drift.
   window.addEventListener('pointerdown', function(e){
     pointerActive = true;
     pointerStartX = e.clientX;
-    input.boost = true;
     hideHint();
   });
   window.addEventListener('pointermove', function(e){
@@ -814,7 +818,6 @@
   function releasePointerSteer(){
     pointerActive = false;
     pointerSteer = 0;
-    input.boost = false;
   }
   window.addEventListener('pointerup', releasePointerSteer);
   window.addEventListener('pointercancel', releasePointerSteer); // touch interrupted (e.g. an OS gesture) -- without
