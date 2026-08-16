@@ -782,10 +782,7 @@
   var pointerStartX = 0;
   var laneOffset = 0;
   var steerSmooth = 0;
-  var driftAngle = 0;
-  var carHeading = 0; // the car's OWN heading -- free-running, changed only by steering, never by the road's curve
-  var TURN_RATE = 1.8;
-  var MAX_HEADING_MISMATCH = 0.6; // vs. the road's local heading -- a safety clamp, not the normal operating range
+  var LANE_STEER_SPEED = 8; // units/sec of lateral movement at full steer -- direct lane control, no drift physics
 
   window.addEventListener('keydown', function(e){
     if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') input.left = true;
@@ -1427,23 +1424,8 @@
 
     var rawSteer = frozen ? 0 : ((input.right?1:0) - (input.left?1:0) + pointerSteer);
     steerSmooth += (rawSteer - steerSmooth) * Math.min(1, dt*9);
-    var speedFactor = 1 - Math.min(0.55, Math.abs(speed)/MAX_SPEED*0.55);
-    var steerDir = speed < -0.05 ? -1 : 1;
-
-    // Steering turns the CAR's own heading -- it is never tied to the
-    // road's heading at all, same as a real steering wheel. Lane position
-    // only drifts as a *consequence* of the mismatch between which way the
-    // car is actually pointed and which way the road goes right here: let
-    // go of the wheel through a curve and the car keeps pointing the way it
-    // was, so the road curves out from under it and it drifts toward the
-    // outside -- arrow keys are what stop that, instead of the car just
-    // auto-tracking the road's curve no matter what you do.
-    carHeading += steerDir * steerSmooth * TURN_RATE * speedFactor * dt;
 
     lateralVelocity *= Math.max(0, 1 - dt*4.5); // drag -- a knockback slide settles out
-
-    var driftTarget = steerSmooth * Math.min(1, Math.abs(speed)/22) * 0.5;
-    driftAngle += (driftTarget - driftAngle) * Math.min(1, dt*3.2);
 
     worldDistance += speed * dt;
     if (localFinished) worldDistance = Math.min(worldDistance, FINISH_S);
@@ -1460,19 +1442,14 @@
 
     var frame = sampleAt(worldDistance);
 
-    // lane drift is driven entirely by how much the car's actual heading
-    // disagrees with the road's heading right here -- never automatically
-    // zero just because the road happens to bend.
-    var headingMismatch = carHeading - frame.heading;
-    laneOffset += Math.sin(headingMismatch) * speed * dt;
-    laneOffset += lateralVelocity * dt;
+    // Steering directly moves the car sideways across the road -- smooth,
+    // immediate, and proportional to how hard you're holding the key, with
+    // no heading/inertia physics to overshoot or fight. You're choosing a
+    // lane position, same as slowroads.io, not simulating a steering wheel.
+    laneOffset += steerSmooth * LANE_STEER_SPEED * dt;
+    laneOffset += lateralVelocity * dt; // ram/shot knockback still slides you sideways
     var maxLane = ROAD_WIDTH/2 - 1.1;
     laneOffset = Math.max(-maxLane, Math.min(maxLane, laneOffset));
-    // safety clamp so a long unsteered stretch can't leave the car facing
-    // something nonsensical (e.g. backwards) -- in practice the lane clamp
-    // above bites, and you need to steer, well before this ever matters
-    if (headingMismatch > MAX_HEADING_MISMATCH) carHeading = frame.heading + MAX_HEADING_MISMATCH;
-    else if (headingMismatch < -MAX_HEADING_MISMATCH) carHeading = frame.heading - MAX_HEADING_MISMATCH;
 
     var px = Math.cos(frame.heading), pz = Math.sin(frame.heading);
 
@@ -1481,9 +1458,9 @@
 
     car.position.set(frame.x + px*laneOffset, frame.y + 0.02 + bob, frame.z + pz*laneOffset);
     var slope = slopeAt(worldDistance);
-    car.rotation.y = -carHeading - driftAngle; // the car's own heading -- not the road's
+    car.rotation.y = -frame.heading - steerSmooth*0.22; // follows the road, with a clear turn-in while steering
     car.rotation.x = reduceMotion ? 0 : Math.atan(slope) - accel*0.0035;
-    car.rotation.z = reduceMotion ? 0 : frame.bank - headingMismatch*0.25 - driftAngle*0.35 + Math.sin(t*8)*0.01;
+    car.rotation.z = reduceMotion ? 0 : frame.bank - steerSmooth*0.12 + Math.sin(t*8)*0.01; // lean into the turn
 
     if (carKick > 0){
       carKick = Math.max(0, carKick - dt*3);
@@ -1847,7 +1824,7 @@
     raceEndsAt = msg.endsAt || null;
     resetTrack(msg.seed);
     worldDistance = 0; localFinished = false; myFinishTime = null;
-    steerSmooth = 0; lateralVelocity = 0; driftAngle = 0; carHeading = 0;
+    steerSmooth = 0; lateralVelocity = 0;
 
     // line everyone up side-by-side on a starting grid instead of stacking
     // every car on lane 0 -- same ID ordering on every client (sorted
@@ -1865,7 +1842,7 @@
     var startFrame = sampleAt(worldDistance);
     var startPx = Math.cos(startFrame.heading), startPz = Math.sin(startFrame.heading);
     car.position.set(startFrame.x + startPx*laneOffset, startFrame.y + 0.02, startFrame.z + startPz*laneOffset);
-    car.rotation.y = -carHeading; // fresh heading (0) just reset above -- not tied to the road's heading
+    car.rotation.y = -startFrame.heading;
 
     finishToastEl.hidden = true;
     raceResultsEl.hidden = true;
