@@ -291,6 +291,7 @@
      a straight lane.)
   ============================================================ */
   var ROAD_WIDTH = 9;
+  var maxLane = ROAD_WIDTH/2 - 1.1; // how far off centerline a car can go before hitting the road's edge
   var TERRAIN_HALF_WIDTH = 64;
   var SAMPLE_STEP = 4;
   var CHUNK_LEN = 160;
@@ -1402,12 +1403,19 @@
     }
   }
 
+  var EDGE_ZONE = 0.12; // how close to the clamp counts as "touching" the very edge/shoulder
+  var EDGE_DRAG = 16; // extra deceleration while riding the edge -- like scraping the shoulder
+
   function update(dt){
     prevSpeed = speed;
     var frozen = localFinished || exploded;
     var boost = catchUpBoost();
     var effMaxSpeed = MAX_SPEED + boost;
     var effAccel = ACCEL + boost*0.6;
+    // laneOffset here is still last frame's position -- one-frame-old, but
+    // that's imperceptible and lets the edge-drag react in the same block
+    // as every other speed change instead of needing a second pass.
+    var onEdge = !frozen && Math.abs(laneOffset) >= maxLane - EDGE_ZONE;
     if (frozen){
       speed = Math.max(0, speed - COAST_DRAG*1.4*dt);
     } else if (input.boost){
@@ -1419,6 +1427,7 @@
     } else if (speed < 0){
       speed = Math.min(0, speed + COAST_DRAG*dt);
     }
+    if (onEdge && speed > 0) speed = Math.max(0, speed - EDGE_DRAG*dt); // touching the road's edge scrubs speed
     speed = Math.max(MAX_REVERSE, Math.min(effMaxSpeed, speed));
     var accel = (speed - prevSpeed) / Math.max(dt, 0.0001);
 
@@ -1448,7 +1457,6 @@
     // lane position, same as slowroads.io, not simulating a steering wheel.
     laneOffset += steerSmooth * LANE_STEER_SPEED * dt;
     laneOffset += lateralVelocity * dt; // ram/shot knockback still slides you sideways
-    var maxLane = ROAD_WIDTH/2 - 1.1;
     laneOffset = Math.max(-maxLane, Math.min(maxLane, laneOffset));
 
     var px = Math.cos(frame.heading), pz = Math.sin(frame.heading);
@@ -1832,7 +1840,6 @@
     var gridIds = [myId].concat(Object.keys(remotePlayers).map(Number)).sort(function(a,b){ return a-b; });
     var mySlot = gridIds.indexOf(myId);
     var gridCount = gridIds.length;
-    var maxLane = ROAD_WIDTH/2 - 1.1;
     var gridSpacing = gridCount > 1 ? Math.min(2.3, (maxLane*2) / (gridCount-1)) : 0;
     laneOffset = (mySlot - (gridCount-1)/2) * gridSpacing;
 
