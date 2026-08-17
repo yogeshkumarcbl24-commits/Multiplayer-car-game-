@@ -846,10 +846,12 @@
   var laneOffset = 0;
   var steerSmooth = 0;
   var carHeading = 0; // the car's own facing angle -- changes ONLY from steering input, never auto-follows the road's curve
-  var TURN_RATE = 1.8; // rad/sec of turn at full steer and low speed
+  var TURN_RATE = 1.5; // rad/sec of turn at full steer and low speed
   var MAX_HEADING_MISMATCH = 0.6; // vs. the road's local heading -- a safety clamp against winding up facing
                                    // something nonsensical after a long unsteered stretch, not the normal operating range
   var MAX_STEER_ANGLE = 0.5; // rad the front wheels visibly turn at full steer input (~29 degrees)
+  var LATERAL_GRIP = 0.7; // <1 dulls how fast a heading mismatch turns into sideways lane drift --
+                           // without this the car reads as sliding on ice at speed instead of gripping the road
 
   window.addEventListener('keydown', function(e){
     if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') input.left = true;
@@ -1046,8 +1048,8 @@
   /* ============================================================
      MAIN LOOP
   ============================================================ */
-  var MAX_SPEED = 34, MAX_REVERSE = -6;
-  var ACCEL = 16, BRAKE_DECEL = 24, COAST_DRAG = 7;
+  var MAX_SPEED = 26, MAX_REVERSE = -5;
+  var ACCEL = 12, BRAKE_DECEL = 22, COAST_DRAG = 8;
 
   // Catch-up: falling behind (a bad hit, a slow patch, whatever) shouldn't
   // be a permanent loss with no way back. Trailing players get a modest,
@@ -1513,6 +1515,14 @@
     setTimeout(function(){
       myHealth = HEALTH_MAX;
       updateHealthBar();
+      // Dying off-road (or against a tree) shouldn't drop you right back in
+      // the same dirt patch -- put the car back on the pavement, centered
+      // and pointed straight along the road, so a respawn is actually a
+      // fresh start instead of an instant repeat off-road death.
+      laneOffset = 0;
+      lateralVelocity = 0;
+      steerSmooth = 0;
+      carHeading = sampleAt(worldDistance).heading;
       car.visible = true;
       exploded = false;
     }, RESPAWN_DELAY*1000);
@@ -1670,7 +1680,7 @@
     var accel = (speed - prevSpeed) / Math.max(dt, 0.0001);
 
     var rawSteer = frozen ? 0 : ((input.right?1:0) - (input.left?1:0) + pointerSteer);
-    steerSmooth += (rawSteer - steerSmooth) * Math.min(1, dt*9);
+    steerSmooth += (rawSteer - steerSmooth) * Math.min(1, dt*7);
 
     // Front wheels turn on their own axis with the steering input, same
     // direction the whole car eventually swings toward -- visible feedback
@@ -1684,7 +1694,7 @@
     // as the road curves underneath it. It never auto-aligns to the road.
     // Turns sharper at low speed (like a real steering wheel), and flips
     // which way the nose swings when backing up.
-    var turnSpeedFactor = 1 - Math.min(0.55, Math.abs(speed)/MAX_SPEED*0.55);
+    var turnSpeedFactor = 1 - Math.min(0.68, Math.abs(speed)/MAX_SPEED*0.68);
     var turnDir = speed < -0.05 ? -1 : 1;
     carHeading += turnDir * steerSmooth * TURN_RATE * turnSpeedFactor * dt;
 
@@ -1720,7 +1730,7 @@
     // as real driving, and drifting far enough genuinely takes you off the
     // road (see MAX_OFFROAD) rather than bouncing off an invisible wall.
     var headingMismatch = carHeading - frame.heading;
-    laneOffset += Math.sin(headingMismatch) * speed * dt;
+    laneOffset += Math.sin(headingMismatch) * speed * dt * LATERAL_GRIP;
     laneOffset += lateralVelocity * dt; // ram/shot knockback still slides you sideways
     laneOffset = Math.max(-MAX_OFFROAD, Math.min(MAX_OFFROAD, laneOffset));
     // safety clamp so a long unsteered stretch can't leave the car facing
