@@ -60,6 +60,13 @@ var MIN_DURATION_MS = 30 * 1000;
 var MAX_DURATION_MS = 15 * 60 * 1000;
 var DEFAULT_DURATION_MS = 2 * 60 * 1000;
 
+// The finish line sits at BASE_FINISH_DISTANCE world units for the default
+// (2 minute) race. Scaled linearly with the chosen duration so a 5 minute
+// race's finish line is actually ~2.5x farther out than a 2 minute one --
+// otherwise every duration reaches the same fixed line and the race just
+// ends early once someone crosses it, regardless of the time picked.
+var BASE_FINISH_DISTANCE = 1250;
+
 // Room codes avoid ambiguous characters (0/O, 1/I) since people read these off a screen.
 var CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 var rooms = new Map(); // code -> room
@@ -78,7 +85,7 @@ function createRoom(code) {
     code: code,
     players: new Map(),
     nextId: 1,
-    race: { state: 'lobby', seed: null, startAt: null, endsAt: null, finishDistance: 1250 },
+    race: { state: 'lobby', seed: null, startAt: null, endsAt: null, finishDistance: BASE_FINISH_DISTANCE },
     raceTimeoutHandle: null
   };
 }
@@ -186,6 +193,7 @@ wss.on('connection', function (ws) {
         room.race.seed = Math.floor(Math.random() * 1e9);
         room.race.startAt = Date.now() + COUNTDOWN_MS;
         room.race.endsAt = room.race.startAt + duration;
+        room.race.finishDistance = Math.round(BASE_FINISH_DISTANCE * (duration / DEFAULT_DURATION_MS));
         room.players.forEach(function (p) {
           p.finished = false; p.finishTime = null; p.distance = 0;
         });

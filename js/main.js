@@ -1027,7 +1027,9 @@
   var raceStartPerf = 0;
   var localFinished = false;
   var myFinishTime = null;
-  var FINISH_S = 1250; // ~3000 displayed metres
+  var finishDistance = 1250; // world units (~3000 displayed metres); the server scales this
+                              // per-race to match the chosen race duration -- see the
+                              // 'raceStart' handler below, which overwrites it from msg.finishDistance
   var finishGate = null;
   var lastNetSend = 0;
 
@@ -1149,8 +1151,8 @@
 
   function ensureFinishGate(){
     if (finishGate) return;
-    var f = sampleAt(FINISH_S);
-    if (Math.abs(f.s - FINISH_S) > 1) return; // not built yet, try again next frame
+    var f = sampleAt(finishDistance);
+    if (Math.abs(f.s - finishDistance) > 1) return; // not built yet, try again next frame
     var px = Math.cos(f.heading), pz = Math.sin(f.heading);
     var g = new THREE.Group();
     var postMat = new THREE.MeshStandardMaterial({ color: 0x2a2e4a, emissive: new THREE.Color(PALETTE.gold), emissiveIntensity: 0.9 });
@@ -1437,11 +1439,11 @@
     lateralVelocity *= Math.max(0, 1 - dt*4.5); // drag -- a knockback slide settles out
 
     worldDistance += speed * dt;
-    if (localFinished) worldDistance = Math.min(worldDistance, FINISH_S);
+    if (localFinished) worldDistance = Math.min(worldDistance, finishDistance);
     ensureChunks(worldDistance);
     ensureFinishGate();
 
-    if (!localFinished && worldDistance >= FINISH_S){
+    if (!localFinished && worldDistance >= finishDistance){
       localFinished = true;
       myFinishTime = raceState === 'racing' ? (performance.now() - raceStartPerf) / 1000 : clock.elapsedTime;
       document.getElementById('finish-time').textContent = myFinishTime.toFixed(1) + 's';
@@ -1830,6 +1832,7 @@
     raceState = 'countdown';
     lastHandledRaceState = 'countdown';
     raceEndsAt = msg.endsAt || null;
+    finishDistance = msg.finishDistance || finishDistance;
     resetTrack(msg.seed);
     worldDistance = 0; localFinished = false; myFinishTime = null;
     steerSmooth = 0; lateralVelocity = 0;
