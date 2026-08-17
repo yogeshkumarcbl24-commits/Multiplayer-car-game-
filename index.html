@@ -97,10 +97,39 @@
   </div>
 </div>
 
+<div id="tutorial-overlay" hidden>
+  <div class="tutorial-panel">
+    <div class="tutorial-title">How to Play</div>
+
+    <div class="tutorial-section">
+      <div class="tutorial-section-title">Drive</div>
+      <p><kbd>&larr;</kbd><kbd>&rarr;</kbd> (or <kbd>A</kbd><kbd>D</kbd>, or drag) to steer, <kbd>&uarr;</kbd> for gas, <kbd>&darr;</kbd> to brake or reverse. The car only turns when <em>you</em> steer it &mdash; it won't auto-follow curves for you, so keep steering through every bend or you'll drift wide.</p>
+    </div>
+
+    <div class="tutorial-section">
+      <div class="tutorial-section-title">Fight</div>
+      <p>Ram other cars to bump them off their line, or hold <kbd>Space</kbd> to fire your mounted gun. Watch your HP bar &mdash; run out and your car explodes, then respawns a moment later.</p>
+    </div>
+
+    <div class="tutorial-section">
+      <div class="tutorial-section-title">Race</div>
+      <p>Cross the finish line banner before time runs out to post a time. Pick a longer race length and the finish line sits farther out, so the race actually takes about that long either way.</p>
+    </div>
+
+    <div class="tutorial-section">
+      <div class="tutorial-section-title">Modes</div>
+      <p><strong>Practice Solo</strong> is a free drive with no timer. <strong>Race vs Computer</strong> is a timed race against an AI opponent, no other players needed. In <strong>multiplayer</strong>, create a room and share the code with friends on the same WiFi &mdash; only the room's host picks the race length and starts it, everyone else just joins in.</p>
+    </div>
+
+    <button type="button" id="tutorial-close-btn" class="btn-primary">Got it, let's race</button>
+  </div>
+</div>
+
 <div id="gate">
   <div class="gate-inner">
     <h1>The road <em>never ends</em> &mdash; so somebody has to win</h1>
     <p class="gate-sub">Race a procedurally endless highway that curves and rolls through desert and hills. Create a room and share the code with friends on the same network, ram opponents or shoot your mounted gun to bump them off their line. Steer with the arrow keys, drag, or the on-screen controls on a phone &mdash; press gas to actually move.</p>
+    <button type="button" id="how-to-play-btn" class="btn-ghost">How to Play</button>
 
     <div class="mp-panel">
       <div class="mp-status" id="mp-status">Looking for a race server on this WiFi network&hellip;</div>

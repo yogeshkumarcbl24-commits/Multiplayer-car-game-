@@ -452,6 +452,67 @@ body.touch-active .lane-indicator{ display:none; }
   font-size:13px;
 }
 
+/* ---------- How to Play tutorial ---------- */
+#how-to-play-btn{ margin-top:0; margin-bottom:22px; }
+#tutorial-overlay{
+  position:fixed;
+  inset:0;
+  z-index:11;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background:rgba(3,4,10,0.7);
+  backdrop-filter:blur(4px);
+  padding:24px;
+}
+#tutorial-overlay[hidden]{ display:none; }
+.tutorial-panel{
+  text-align:left;
+  background:var(--panel);
+  border:1px solid var(--cyan);
+  border-radius:16px;
+  padding:26px 30px;
+  max-width:460px;
+  max-height:82vh;
+  overflow-y:auto;
+  box-shadow:0 0 60px rgba(47,230,255,0.2);
+}
+.tutorial-title{
+  font-family:"Arial Narrow","Helvetica Neue",Arial,sans-serif;
+  font-weight:800;
+  font-size:22px;
+  letter-spacing:0.06em;
+  color:var(--cyan);
+  margin-bottom:18px;
+  text-align:center;
+}
+.tutorial-section{ margin-bottom:16px; }
+.tutorial-section-title{
+  font-size:11px;
+  letter-spacing:0.1em;
+  text-transform:uppercase;
+  color:var(--gold);
+  margin-bottom:5px;
+  font-weight:700;
+}
+.tutorial-section p{
+  margin:0;
+  font-size:13.5px;
+  line-height:1.6;
+  color:var(--fog-text);
+}
+.tutorial-section kbd{
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  background:#161a3a;
+  border:1px solid var(--hairline);
+  border-bottom-width:2px;
+  border-radius:4px;
+  padding:1px 6px;
+  color:var(--fog-text);
+  font-size:11px;
+}
+#tutorial-close-btn{ display:block; margin:22px auto 0; }
+
 /* ---------- Start gate ---------- */
 #gate{
   position:fixed;

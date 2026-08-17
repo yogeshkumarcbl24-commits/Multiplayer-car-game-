@@ -291,8 +291,12 @@
      a straight lane.)
   ============================================================ */
   var ROAD_WIDTH = 9;
-  var maxLane = ROAD_WIDTH/2 - 1.1; // how far off centerline a car can go before hitting the road's edge
+  var maxLane = ROAD_WIDTH/2 - 1.1; // the paved road's own half-width, used for the starting grid and the lane
+                                     // indicator -- NOT a hard clamp on the car anymore, see MAX_OFFROAD below
   var TERRAIN_HALF_WIDTH = 64;
+  var MAX_OFFROAD = TERRAIN_HALF_WIDTH - 6; // driving badly can genuinely put you off the road and onto the
+                                             // shoulder/open terrain -- this only stops you at the edge of the
+                                             // rendered world, not at the edge of the pavement
   var SAMPLE_STEP = 4;
   var CHUNK_LEN = 160;
   var BANK_K = 3.2;
@@ -538,7 +542,20 @@
   });
 
   var wheelGeo = new THREE.CylinderGeometry(0.36, 0.36, 0.3, 14);
-  [[-0.86,0.36,-1.15],[0.86,0.36,-1.15],[-0.86,0.36,1.25],[0.86,0.36,1.25]].forEach(function(p){
+  // Front wheels sit inside their own pivot group so they can turn on their
+  // own axis with the steering input, same as a real steering knuckle --
+  // the wheel mesh is centered in the pivot, and the pivot carries the
+  // actual axle position, so rotating the pivot's Y turns just the wheel.
+  var frontWheelPivots = [-0.86, 0.86].map(function(x){
+    var wheel = new THREE.Mesh(wheelGeo, wheelMat);
+    wheel.rotation.z = Math.PI/2;
+    var pivot = new THREE.Group();
+    pivot.position.set(x, 0.36, -1.15);
+    pivot.add(wheel);
+    car.add(pivot);
+    return pivot;
+  });
+  [[-0.86,0.36,1.25],[0.86,0.36,1.25]].forEach(function(p){
     var wheel = new THREE.Mesh(wheelGeo, wheelMat);
     wheel.rotation.z = Math.PI/2;
     wheel.position.set(p[0], p[1], p[2]);
@@ -783,9 +800,11 @@
   var pointerStartX = 0;
   var laneOffset = 0;
   var steerSmooth = 0;
-  var LANE_STEER_SPEED = 8; // units/sec of lateral movement at full steer -- direct lane control, no drift physics
   var carHeading = 0; // the car's own facing angle -- changes ONLY from steering input, never auto-follows the road's curve
-  var TURN_RATE = 1.6; // rad/sec of visual turn at full steer
+  var TURN_RATE = 1.8; // rad/sec of turn at full steer and low speed
+  var MAX_HEADING_MISMATCH = 0.6; // vs. the road's local heading -- a safety clamp against winding up facing
+                                   // something nonsensical after a long unsteered stretch, not the normal operating range
+  var MAX_STEER_ANGLE = 0.5; // rad the front wheels visibly turn at full steer input (~29 degrees)
 
   window.addEventListener('keydown', function(e){
     if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') input.left = true;
@@ -1022,6 +1041,33 @@
   var myId = null;
   var myName = 'Racer ' + (100 + Math.floor(Math.random() * 900));
   var myColor = PLAYER_COLORS[0];
+
+  // Your own car mirrors whatever color you picked at the gate -- same
+  // trim/taillight/underglow treatment buildGhostCar() gives everyone
+  // else -- plus a floating name tag above it, same as remote players get,
+  // so it's obvious at a glance which car (and whose) you're looking at.
+  var myCarNameSprite = null;
+  function updateMyIdentity(){
+    var c = new THREE.Color(myColor);
+    trimMat.color.copy(c);
+    trimMat.emissive.copy(c);
+    taillightMat.color.copy(c);
+    underGlow.material.color.copy(c);
+
+    if (myCarNameSprite){
+      myCarNameSprite.material.map.dispose();
+      myCarNameSprite.material.map = makeNameTagTexture(myName, myColor);
+    } else {
+      myCarNameSprite = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: makeNameTagTexture(myName, myColor),
+        transparent: true, depthWrite:false
+      }));
+      myCarNameSprite.scale.set(2.2, 0.55, 1);
+      myCarNameSprite.position.set(0, 2.1, 0);
+      car.add(myCarNameSprite);
+    }
+  }
+  updateMyIdentity();
   var DURATION_OPTIONS = [60, 120, 180, 300];
   var DEFAULT_RACE_DURATION_MS = 120000; // mirrors server/server.js's DEFAULT_DURATION_MS
   var BASE_FINISH_DISTANCE = 1250; // mirrors server/server.js's BASE_FINISH_DISTANCE
@@ -1344,6 +1390,7 @@
   var HEALTH_MAX = 100;
   var SHOT_DAMAGE = 35;
   var RAM_DAMAGE = 30;
+  var OFFROAD_DAMAGE_PER_SEC = 15; // HP/sec lost while off the pavement -- leaving the road costs you, it's not just a scenic detour
   var RESPAWN_DELAY = 1.7;
   var myHealth = HEALTH_MAX;
   var exploded = false;
@@ -1532,10 +1579,21 @@
     var rawSteer = frozen ? 0 : ((input.right?1:0) - (input.left?1:0) + pointerSteer);
     steerSmooth += (rawSteer - steerSmooth) * Math.min(1, dt*9);
 
+    // Front wheels turn on their own axis with the steering input, same
+    // direction the whole car eventually swings toward -- visible feedback
+    // the instant you press a key, before the car itself has turned at all.
+    var steerAngle = -steerSmooth * MAX_STEER_ANGLE;
+    frontWheelPivots[0].rotation.y = steerAngle;
+    frontWheelPivots[1].rotation.y = steerAngle;
+
     // The car's facing direction is free-running -- it only changes from
     // steering input, and otherwise holds wherever it was last pointed even
     // as the road curves underneath it. It never auto-aligns to the road.
-    carHeading += steerSmooth * TURN_RATE * dt;
+    // Turns sharper at low speed (like a real steering wheel), and flips
+    // which way the nose swings when backing up.
+    var turnSpeedFactor = 1 - Math.min(0.55, Math.abs(speed)/MAX_SPEED*0.55);
+    var turnDir = speed < -0.05 ? -1 : 1;
+    carHeading += turnDir * steerSmooth * TURN_RATE * turnSpeedFactor * dt;
 
     lateralVelocity *= Math.max(0, 1 - dt*4.5); // drag -- a knockback slide settles out
 
@@ -1562,13 +1620,25 @@
 
     var frame = sampleAt(worldDistance);
 
-    // Steering directly moves the car sideways across the road -- smooth,
-    // immediate, and proportional to how hard you're holding the key, with
-    // no heading/inertia physics to overshoot or fight. You're choosing a
-    // lane position, same as slowroads.io, not simulating a steering wheel.
-    laneOffset += steerSmooth * LANE_STEER_SPEED * dt;
+    // You actually go wherever the car is pointed: lane position drifts as
+    // a direct consequence of the car's heading disagreeing with the
+    // road's heading right here. Point straight through an unsteered curve
+    // and the road bends out from under you -- correcting is on you, same
+    // as real driving, and drifting far enough genuinely takes you off the
+    // road (see MAX_OFFROAD) rather than bouncing off an invisible wall.
+    var headingMismatch = carHeading - frame.heading;
+    laneOffset += Math.sin(headingMismatch) * speed * dt;
     laneOffset += lateralVelocity * dt; // ram/shot knockback still slides you sideways
-    laneOffset = Math.max(-maxLane, Math.min(maxLane, laneOffset));
+    laneOffset = Math.max(-MAX_OFFROAD, Math.min(MAX_OFFROAD, laneOffset));
+    // safety clamp so a long unsteered stretch can't leave the car facing
+    // something nonsensical (e.g. backwards) -- in practice you'll have run
+    // off the road, well before this ever matters
+    if (headingMismatch > MAX_HEADING_MISMATCH) carHeading = frame.heading + MAX_HEADING_MISMATCH;
+    else if (headingMismatch < -MAX_HEADING_MISMATCH) carHeading = frame.heading - MAX_HEADING_MISMATCH;
+
+    // Off the pavement costs you health over time -- bad driving has a real
+    // consequence instead of just a shrug and a scenic detour through the dirt.
+    if (!frozen && Math.abs(laneOffset) > maxLane) applyDamage(OFFROAD_DAMAGE_PER_SEC * dt);
 
     var px = Math.cos(frame.heading), pz = Math.sin(frame.heading);
 
@@ -1687,7 +1757,7 @@
     statSpeed.innerHTML = String(Math.round(speed*11)).padStart(3,'0') + '<small>km/h</small>';
     statDistance.innerHTML = Math.round(worldDistance*2.4).toLocaleString() + '<small>m</small>';
     statTime.textContent = mins + ':' + String(secs).padStart(2,'0');
-    drawLaneIndicator(laneOffset / maxLane);
+    drawLaneIndicator(Math.max(-1, Math.min(1, laneOffset / maxLane))); // pins to the edge once you're off the pavement, instead of running off the widget
     updateLeaderboard();
   }
 
@@ -1739,6 +1809,7 @@
   nameInput.value = myName;
   nameInput.addEventListener('change', function(){
     myName = nameInput.value.trim() || myName;
+    updateMyIdentity();
     sendJoin();
   });
 
@@ -1754,6 +1825,7 @@
       var all = swatchesEl.querySelectorAll('.swatch');
       for (var i2=0;i2<all.length;i2++) all[i2].classList.remove('selected');
       b.classList.add('selected');
+      updateMyIdentity();
       sendJoin();
     });
     swatchesEl.appendChild(b);
@@ -1997,6 +2069,39 @@
     startCountdown(msg.startAt);
     setTimeout(function(){ if (raceState === 'countdown') raceState = 'racing'; }, Math.max(0, msg.startAt - Date.now()));
   });
+
+  /* ============================================================
+     HOW TO PLAY: a short tutorial overlay, shown automatically the
+     first time someone opens the game (tracked via localStorage) and
+     reachable afterward from the gate for a refresher.
+  ============================================================ */
+  var TUTORIAL_SEEN_KEY = 'cardDriveTutorialSeen';
+  var tutorialOverlayEl = document.getElementById('tutorial-overlay');
+  var howToPlayBtn = document.getElementById('how-to-play-btn');
+  var tutorialCloseBtn = document.getElementById('tutorial-close-btn');
+
+  function showTutorial(){
+    tutorialOverlayEl.hidden = false;
+  }
+  function hideTutorial(){
+    tutorialOverlayEl.hidden = true;
+    // best-effort -- a private-browsing tab or a locked-down browser can
+    // throw here; worst case the tutorial just shows again next visit
+    try { localStorage.setItem(TUTORIAL_SEEN_KEY, '1'); } catch (e) {}
+  }
+
+  howToPlayBtn.addEventListener('click', showTutorial);
+  tutorialCloseBtn.addEventListener('click', hideTutorial);
+  tutorialOverlayEl.addEventListener('click', function(e){
+    if (e.target === tutorialOverlayEl) hideTutorial(); // clicking the dimmed backdrop dismisses it too
+  });
+  window.addEventListener('keydown', function(e){
+    if (e.key === 'Escape' && !tutorialOverlayEl.hidden) hideTutorial();
+  });
+
+  var tutorialAlreadySeen = false;
+  try { tutorialAlreadySeen = !!localStorage.getItem(TUTORIAL_SEEN_KEY); } catch (e) {}
+  if (!tutorialAlreadySeen) showTutorial();
 
   Net.connect();
 
