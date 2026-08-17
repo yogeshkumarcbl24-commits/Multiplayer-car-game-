@@ -899,8 +899,15 @@
     chunk.ownGeometries.forEach(function(g){ g.dispose(); });
   }
 
-  var AHEAD_DIST = 300;
-  var BEHIND_DIST = 40;
+  // How far past the car to keep chunks built/rendered. Tied to the fog
+  // density (line ~44) rather than picked arbitrarily: past ~175 units the
+  // exponential fog has already hidden almost everything, so building (and
+  // shading/shadowing) full terrain+scenery geometry out to 300 units, like
+  // this used to, was rendering a lot that could never actually be seen.
+  // One chunk length of headroom past that keeps the buildout from ever
+  // being visible popping in as it clears the fog.
+  var AHEAD_DIST = 190;
+  var BEHIND_DIST = 40; // the chase cam never looks backward, so anything past this is disposed the moment it's behind
   function ensureChunks(carS){
     while (!chunks.length || chunks[chunks.length-1].endS < carS + AHEAD_DIST){
       var startS = chunks.length ? chunks[chunks.length-1].endS : 0;
