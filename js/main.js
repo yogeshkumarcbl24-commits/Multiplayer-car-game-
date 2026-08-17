@@ -768,9 +768,9 @@
   var SCENERY_NEAR_PER_CHUNK = 16;
   var SCENERY_FAR_PER_CHUNK = 11;
   var NITRO_PICKUP_CHANCE = 0.7;   // per chunk -- not guaranteed, so it stays a bonus you look out for
-  var RAMP_CHANCE = 0.4;           // per chunk -- frequent enough to matter, rare enough to stay a moment, not the norm
+  var RAMP_CHANCE = 0.15;          // per chunk -- rare, so a ramp stays a surprise instead of every-chunk furniture
   var RAMP_LENGTH = 10;
-  var RAMP_HEIGHT = 2.6;
+  var RAMP_HEIGHT = 1.4;           // a gentler rise -- a real hop, not a launchpad
   var RAMP_WIDTH = 4.2;
 
   function buildChunk(targetEndS){
@@ -1550,8 +1550,8 @@
   var NITRO_MAX = 100;
   var NITRO_PICKUP_FILL = 40;      // one orb ~= 40% of the tank
   var NITRO_DRAIN_PER_SEC = 38;    // a full tank is a bit over 2.5s of boost
-  var NITRO_ACCEL_BONUS = 22;
-  var NITRO_MAX_SPEED_BONUS = 15;
+  var NITRO_ACCEL_BONUS = 8;
+  var NITRO_MAX_SPEED_BONUS = 5; // a noticeable kick, not a speedo reading that looks broken
   var NITRO_PICKUP_RADIUS = 1.6;
   var nitro = 0;
   var nitroFillEl = document.getElementById('nitro-fill');
@@ -1825,8 +1825,8 @@
   var carAirY = 0;      // height above the road surface -- 0 means grounded
   var carVertVel = 0;   // vertical speed, +up
   var GRAVITY = 24;
-  var RAMP_LAUNCH_BASE = 5;
-  var RAMP_LAUNCH_SPEED_FACTOR = 0.3; // faster off the ramp = higher/longer air, like a real one
+  var RAMP_LAUNCH_BASE = 3.2;
+  var RAMP_LAUNCH_SPEED_FACTOR = 0.2; // faster off the ramp = higher/longer air, like a real one
   var RAMP_MIN_SPEED = 5;             // too slow and you just roll up and over it
   var RAMP_COOLDOWN = 1.5;
 
