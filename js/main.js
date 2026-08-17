@@ -579,33 +579,41 @@
   var headlightMat = new THREE.MeshBasicMaterial({ color: 0xeaffff });
   var taillightMat = new THREE.MeshBasicMaterial({ color: PALETTE.magenta });
 
+  // Every purely-cosmetic body/wheel part lives in carPlaceholder rather than
+  // directly on `car`, so if a real model (see CAR MODEL section below)
+  // loads successfully, hiding this one group swaps the whole placeholder
+  // out in a single line -- lights, gun, and underglow stay on `car`
+  // itself and keep working either way.
+  var carPlaceholder = new THREE.Group();
+  car.add(carPlaceholder);
+
   var chassis = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.42, 3.6), bodyMat);
   chassis.position.y = 0.5;
-  car.add(chassis);
+  carPlaceholder.add(chassis);
 
   var cabin = new THREE.Mesh(new THREE.BoxGeometry(1.22, 0.42, 1.55), glassMat);
   cabin.position.set(0, 0.88, -0.1);
   cabin.rotation.x = -0.1;
-  car.add(cabin);
+  carPlaceholder.add(cabin);
 
   var hood = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.1, 1.15), bodyMat);
   hood.position.set(0, 0.7, -1.55);
   hood.rotation.x = 0.14;
-  car.add(hood);
+  carPlaceholder.add(hood);
 
   var spoiler = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.08, 0.28), bodyMat);
   spoiler.position.set(0, 0.92, 1.75);
-  car.add(spoiler);
+  carPlaceholder.add(spoiler);
   [-1,1].forEach(function(side){
     var strut = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.3, 0.08), bodyMat);
     strut.position.set(side*0.7, 0.78, 1.75);
-    car.add(strut);
+    carPlaceholder.add(strut);
   });
 
   [-1,1].forEach(function(side){
     var strip = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.06, 3.4), trimMat);
     strip.position.set(side*0.87, 0.42, 0);
-    car.add(strip);
+    carPlaceholder.add(strip);
   });
 
   var wheelGeo = new THREE.CylinderGeometry(0.36, 0.36, 0.3, 14);
@@ -619,23 +627,23 @@
     var pivot = new THREE.Group();
     pivot.position.set(x, 0.36, -1.15);
     pivot.add(wheel);
-    car.add(pivot);
+    carPlaceholder.add(pivot);
     return pivot;
   });
   [[-0.86,0.36,1.25],[0.86,0.36,1.25]].forEach(function(p){
     var wheel = new THREE.Mesh(wheelGeo, wheelMat);
     wheel.rotation.z = Math.PI/2;
     wheel.position.set(p[0], p[1], p[2]);
-    car.add(wheel);
+    carPlaceholder.add(wheel);
   });
 
   [-0.55,0.55].forEach(function(x){
     var hl = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.14, 0.06), headlightMat);
     hl.position.set(x, 0.55, -1.82);
-    car.add(hl);
+    carPlaceholder.add(hl);
     var tl = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.13, 0.06), taillightMat);
     tl.position.set(x, 0.6, 1.82);
-    car.add(tl);
+    carPlaceholder.add(tl);
   });
 
   var underGlow = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 4.4), new THREE.MeshBasicMaterial({
@@ -673,6 +681,50 @@
 
   scene.add(car);
   scene.add(camera);
+
+  /* ============================================================
+     CAR MODEL  (optional real glTF model, swapped in over the
+     primitive placeholder once it's loaded. If lib/GLTFLoader.js
+     didn't load, the file is missing, or parsing fails for any
+     reason, this just quietly leaves the placeholder car in place
+     -- never a hard dependency for the game to run.)
+  ============================================================ */
+  // build.py inlines the actual model as a data: URI (window.CAR_MODEL_DATA_URI)
+  // for the single-file card-drive.html build, since that file has no
+  // adjacent assets/ folder to fetch from; the folder version just fetches
+  // the real file.
+  var CAR_MODEL_URL = window.CAR_MODEL_DATA_URI || 'assets/models/hyper-gt.glb';
+  var CAR_TARGET_LENGTH = 3.9; // world units -- close to the placeholder chassis's own length
+  var CAR_MODEL_YAW = Math.PI; // rotation to align the model's forward with the car's own (-Z); tweak if it loads facing backwards
+  if (window.THREE && THREE.GLTFLoader){
+    new THREE.GLTFLoader().load(CAR_MODEL_URL, function(gltf){
+      var model = gltf.scene;
+      model.traverse(function(o){
+        if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; }
+      });
+
+      // Scale to the target length using the model's own longest axis (not
+      // assuming which local axis is "length"), then re-measure afterward
+      // to get an accurate centered, ground-sitting offset.
+      var box = new THREE.Box3().setFromObject(model);
+      var size = box.getSize(new THREE.Vector3());
+      var scale = CAR_TARGET_LENGTH / Math.max(size.x, size.y, size.z, 0.0001);
+      model.scale.setScalar(scale);
+      model.rotation.y = CAR_MODEL_YAW;
+      model.updateMatrixWorld(true);
+
+      box.setFromObject(model);
+      var center = box.getCenter(new THREE.Vector3());
+      model.position.x -= center.x;
+      model.position.z -= center.z;
+      model.position.y -= box.min.y;
+
+      carPlaceholder.visible = false;
+      car.add(model);
+    }, undefined, function(err){
+      console.warn('Car model failed to load -- using the built-in placeholder car instead.', err);
+    });
+  }
 
   var camTargetPos = new THREE.Vector3();
   var camLookPos = new THREE.Vector3();
