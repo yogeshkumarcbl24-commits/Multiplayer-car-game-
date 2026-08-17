@@ -1131,12 +1131,37 @@
   var laneOffset = 0;
   var steerSmooth = 0;
   var carHeading = 0; // the car's own facing angle -- changes ONLY from steering input, never auto-follows the road's curve
-  var TURN_RATE = 1.5; // rad/sec of turn at full steer and low speed
-  var MAX_HEADING_MISMATCH = 0.6; // vs. the road's local heading -- a safety clamp against winding up facing
-                                   // something nonsensical after a long unsteered stretch, not the normal operating range
+  var yawRate = 0;    // how fast carHeading is currently rotating, rad/sec -- driven by tire forces, see CAR PHYSICS below
+  var lastLongAccel = 0; // previous frame's forward accel, m/s^2-ish -- used one frame stale for weight transfer, plenty stable for this
+  var TURN_RATE = 1.5; // rad/sec of turn at full steer -- only used as a low-speed/reverse fallback now, see CAR PHYSICS
   var MAX_STEER_ANGLE = 0.5; // rad the front wheels visibly turn at full steer input (~29 degrees)
-  var LATERAL_GRIP = 0.7; // <1 dulls how fast a heading mismatch turns into sideways lane drift --
-                           // without this the car reads as sliding on ice at speed instead of gripping the road
+
+  /* ============================================================
+     CAR PHYSICS
+     Engine-force-vs-drag/rolling-resistance for speed, and slip-angle
+     tire forces (front/rear, load-limited by weight transfer) for
+     cornering, instead of a flat accel number and a fixed turn rate --
+     see https://rsms.me/etc/car-physics/ (a writeup of Marco Monster's
+     "Car Physics for Games"). Constants below aren't the real-world SI
+     values from that article; they're picked so the car's baseline feel
+     (accel, top speed, braking) lands close to this game's own already-
+     tuned numbers, while cornering now genuinely loses grip under load
+     instead of just turning at a fixed rate.
+  ============================================================ */
+  var CAR_MASS = 1200;               // kg-ish
+  var WHEELBASE = 2.5;                // b + c
+  var CG_TO_FRONT = 1.15;             // b: center of gravity to front axle
+  var CG_TO_REAR = WHEELBASE - CG_TO_FRONT; // c
+  var CG_HEIGHT = 0.55;                // h -- modest on purpose: noticeable weight transfer, not wild
+  var YAW_INERTIA = CAR_MASS * WHEELBASE * WHEELBASE / 12; // solid-rod approximation
+  var CORNERING_STIFFNESS_F = 10.5 * CAR_MASS; // Ca, front
+  var CORNERING_STIFFNESS_R = 11.5 * CAR_MASS; // Ca, rear -- a bit stiffer than the front, so the default
+                                                 // balance gently understeers (front slips first) rather than snap-oversteering
+  var TIRE_GRIP_MU = 1.35;            // available grip coefficient; each axle's max lateral force is this * that axle's own load
+  var ENGINE_MAX_FORCE = CAR_MASS * 12; // full-throttle force -- reproduces the old ACCEL=12 feel at a standstill
+  var BRAKE_FORCE = CAR_MASS * 22;      // reproduces the old BRAKE_DECEL=22 feel
+  var DRAG_COEF = 20;                   // quadratic air drag -- dominates at speed; this (not a hard clamp) is what caps top speed now
+  var ROLL_COEF = 30;                   // linear rolling resistance -- matters most at low speed
 
   window.addEventListener('keydown', function(e){
     if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') input.left = true;
@@ -1336,8 +1361,11 @@
   /* ============================================================
      MAIN LOOP
   ============================================================ */
+  // Still used elsewhere as reference numbers (HUD scale, nitro/ramp/collision
+  // tuning, the safety bound below) even though the real top speed now
+  // emerges from engine force vs. drag/rolling resistance, not a hard clamp
+  // -- see CAR PHYSICS above.
   var MAX_SPEED = 26, MAX_REVERSE = -5;
-  var ACCEL = 12, BRAKE_DECEL = 22, COAST_DRAG = 8;
 
   // Catch-up: falling behind (a bad hit, a slow patch, whatever) shouldn't
   // be a permanent loss with no way back. Trailing players get a modest,
@@ -1585,7 +1613,7 @@
   ============================================================ */
   function resetRacePhysics(){
     worldDistance = 0; localFinished = false; myFinishTime = null;
-    steerSmooth = 0; lateralVelocity = 0; carHeading = 0;
+    steerSmooth = 0; lateralVelocity = 0; carHeading = 0; yawRate = 0; lastLongAccel = 0;
     carAirY = 0; carVertVel = 0;
     nitro = 0; updateNitroBar();
     finishToastEl.hidden = true;
@@ -1773,8 +1801,8 @@
   var NITRO_MAX = 100;
   var NITRO_PICKUP_FILL = 40;      // one orb ~= 40% of the tank
   var NITRO_DRAIN_PER_SEC = 38;    // a full tank is a bit over 2.5s of boost
-  var NITRO_ACCEL_BONUS = 8;
-  var NITRO_MAX_SPEED_BONUS = 5; // a noticeable kick, not a speedo reading that looks broken
+  var NITRO_FORCE_BONUS = CAR_MASS * 9; // extra engine force while burning nitro -- raises both accel AND the
+                                          // drag-balance top speed at once now, no separate "max speed bonus" needed
   var NITRO_PICKUP_RADIUS = 1.6;
   var nitro = 0;
   var nitroFillEl = document.getElementById('nitro-fill');
@@ -1932,6 +1960,8 @@
       // fresh start instead of an instant repeat off-road death.
       laneOffset = 0;
       lateralVelocity = 0;
+      yawRate = 0;
+      lastLongAccel = 0;
       steerSmooth = 0;
       carHeading = sampleAt(worldDistance).heading;
       carAirY = 0;
@@ -2128,22 +2158,6 @@
     }
     nitroFillEl.classList.toggle('active', usingNitro);
 
-    var effMaxSpeed = MAX_SPEED + boost + (usingNitro ? NITRO_MAX_SPEED_BONUS : 0);
-    var effAccel = ACCEL + boost*0.6 + (usingNitro ? NITRO_ACCEL_BONUS : 0);
-    if (frozen){
-      speed = Math.max(0, speed - COAST_DRAG*1.4*dt);
-    } else if (input.boost){
-      speed += effAccel*dt;
-    } else if (input.brake){
-      speed -= BRAKE_DECEL*dt;
-    } else if (speed > 0){
-      speed = Math.max(0, speed - COAST_DRAG*dt);
-    } else if (speed < 0){
-      speed = Math.min(0, speed + COAST_DRAG*dt);
-    }
-    speed = Math.max(MAX_REVERSE, Math.min(effMaxSpeed, speed));
-    var accel = (speed - prevSpeed) / Math.max(dt, 0.0001);
-
     var rawSteer = frozen ? 0 : ((input.right?1:0) - (input.left?1:0) + pointerSteer);
     steerSmooth += (rawSteer - steerSmooth) * Math.min(1, dt*7);
 
@@ -2153,17 +2167,81 @@
     var steerAngle = -steerSmooth * MAX_STEER_ANGLE;
     frontWheelPivots[0].rotation.y = steerAngle;
     frontWheelPivots[1].rotation.y = steerAngle;
+    var delta = steerSmooth * MAX_STEER_ANGLE; // front wheel steering angle, same sign convention as carHeading's own increase = turning right
 
-    // The car's facing direction is free-running -- it only changes from
-    // steering input, and otherwise holds wherever it was last pointed even
-    // as the road curves underneath it. It never auto-aligns to the road.
-    // Turns sharper at low speed (like a real steering wheel), and flips
-    // which way the nose swings when backing up.
-    var turnSpeedFactor = 1 - Math.min(0.68, Math.abs(speed)/MAX_SPEED*0.68);
-    var turnDir = speed < -0.05 ? -1 : 1;
-    carHeading += turnDir * steerSmooth * TURN_RATE * turnSpeedFactor * dt;
+    if (speed > 0.5){
+      // Real slip-angle tire model: front/rear cornering force from how
+      // much each axle's actual velocity direction disagrees with where
+      // its wheels are pointed, capped by that axle's own grip (which
+      // weight transfer shifts between front/rear under accel/braking).
+      // This is what makes cornering genuinely lose grip under load
+      // instead of just turning at a fixed rate -- push too hard and an
+      // axle slides instead of gripping. Gated on speed > 0.5, not
+      // abs(speed) > 0.5 -- atan2's sign convention flips hard the moment
+      // its second argument goes negative, so this must never run with a
+      // negative (reversing) speed or the slip angle discontinues right
+      // at zero instead of smoothly crossing it.
+      var vLongForSlip = Math.max(speed, 3); // keeps atan2 well-behaved at low speed; always positive since speed > 0.5 here
+      var vfLat = lateralVelocity + CG_TO_FRONT * yawRate;
+      var vrLat = lateralVelocity - CG_TO_REAR * yawRate;
+      var slipF = delta - Math.atan2(vfLat, vLongForSlip);
+      var slipR = -Math.atan2(vrLat, vLongForSlip);
 
-    lateralVelocity *= Math.max(0, 1 - dt*4.5); // drag -- a knockback slide settles out
+      // Weight transfer (one-frame-stale accel, plenty stable for this):
+      // accelerating shifts load rearward (less front grip), braking
+      // shifts it forward -- real understeer/oversteer, not a fixed feel.
+      var staticWf = (CG_TO_REAR / WHEELBASE) * CAR_MASS * 9.8;
+      var staticWr = (CG_TO_FRONT / WHEELBASE) * CAR_MASS * 9.8;
+      var weightShift = (CG_HEIGHT / WHEELBASE) * CAR_MASS * lastLongAccel;
+      var wf = Math.max(0, staticWf - weightShift);
+      var wr = Math.max(0, staticWr + weightShift);
+
+      var latF = Math.max(-wf * TIRE_GRIP_MU, Math.min(wf * TIRE_GRIP_MU, CORNERING_STIFFNESS_F * slipF));
+      var latR = Math.max(-wr * TIRE_GRIP_MU, Math.min(wr * TIRE_GRIP_MU, CORNERING_STIFFNESS_R * slipR));
+
+      var yawTorque = Math.cos(delta) * latF * CG_TO_FRONT - latR * CG_TO_REAR;
+      yawRate += (yawTorque / YAW_INERTIA) * dt;
+
+      var corneringForce = latR + Math.cos(delta) * latF;
+      lateralVelocity += (corneringForce / CAR_MASS - speed * yawRate) * dt;
+    } else {
+      // Too slow (or reversing) for the slip-angle model to behave well --
+      // atan2 against a near-zero longitudinal speed is unstable, and this
+      // game's "reverse" is really just a back-up utility, not a driving
+      // mode worth full tire physics. Falls back to a plain turn rate,
+      // same idea the old kinematic steering used.
+      var turnDir = speed < -0.05 ? -1 : 1;
+      yawRate = turnDir * steerSmooth * TURN_RATE * 0.6;
+      lateralVelocity *= Math.max(0, 1 - dt*6); // settle out quickly, no tire physics driving it at a standstill
+    }
+    // The car's facing direction is still free-running -- it only changes
+    // from these forces, and otherwise holds wherever it was last pointed
+    // even as the road curves underneath it. It never auto-aligns to the
+    // road, and there's no artificial clamp on how far it can drift from
+    // the road's heading anymore either -- lose enough grip and it can
+    // genuinely spin out, which is real physics doing its job, not a bug.
+    carHeading += yawRate * dt;
+
+    // Longitudinal: real engine-force-vs-drag/rolling-resistance instead
+    // of a flat accel number -- top speed now emerges from wherever
+    // traction stops beating drag, it isn't a hard clamp.
+    var throttleForce = ENGINE_MAX_FORCE + boost*CAR_MASS*0.6 + (usingNitro ? NITRO_FORCE_BONUS : 0);
+    var dragForce = DRAG_COEF * speed * Math.abs(speed);
+    var rollForce = ROLL_COEF * speed;
+    var longForce;
+    if (frozen){
+      longForce = -dragForce - rollForce*1.4;
+    } else if (input.boost){
+      longForce = throttleForce - dragForce - rollForce;
+    } else if (input.brake){
+      longForce = -BRAKE_FORCE - dragForce - rollForce;
+    } else {
+      longForce = -dragForce - rollForce;
+    }
+    lastLongAccel = longForce / CAR_MASS;
+    speed += lastLongAccel * dt;
+    speed = Math.max(MAX_REVERSE, Math.min(MAX_SPEED*2.2, speed)); // generous safety bound, not a real gameplay clamp -- see NITRO_FORCE_BONUS etc.
+    var accel = (speed - prevSpeed) / Math.max(dt, 0.0001);
 
     worldDistance += speed * dt;
     if (localFinished) worldDistance = Math.min(worldDistance, finishDistance);
@@ -2189,20 +2267,17 @@
     var frame = sampleAt(worldDistance);
 
     // You actually go wherever the car is pointed: lane position drifts as
-    // a direct consequence of the car's heading disagreeing with the
-    // road's heading right here. Point straight through an unsteered curve
-    // and the road bends out from under you -- correcting is on you, same
-    // as real driving, and drifting far enough genuinely takes you off the
-    // road (see MAX_OFFROAD) rather than bouncing off an invisible wall.
+    // the car's real-world velocity (its own forward speed plus whatever
+    // lateral velocity the tire physics above gave it, ram/shot knockback
+    // included -- lateralVelocity carries both now) gets projected onto
+    // the road's own lateral axis here. Point straight through an
+    // unsteered curve and the road bends out from under you -- correcting
+    // is on you, same as real driving, and drifting far enough genuinely
+    // takes you off the road (see MAX_OFFROAD) rather than bouncing off an
+    // invisible wall.
     var headingMismatch = carHeading - frame.heading;
-    laneOffset += Math.sin(headingMismatch) * speed * dt * LATERAL_GRIP;
-    laneOffset += lateralVelocity * dt; // ram/shot knockback still slides you sideways
+    laneOffset += (Math.sin(headingMismatch) * speed + Math.cos(headingMismatch) * lateralVelocity) * dt;
     laneOffset = Math.max(-MAX_OFFROAD, Math.min(MAX_OFFROAD, laneOffset));
-    // safety clamp so a long unsteered stretch can't leave the car facing
-    // something nonsensical (e.g. backwards) -- in practice you'll have run
-    // off the road, well before this ever matters
-    if (headingMismatch > MAX_HEADING_MISMATCH) carHeading = frame.heading + MAX_HEADING_MISMATCH;
-    else if (headingMismatch < -MAX_HEADING_MISMATCH) carHeading = frame.heading - MAX_HEADING_MISMATCH;
 
     // Off the pavement costs you health over time -- bad driving has a real
     // consequence instead of just a shrug and a scenic detour through the dirt.

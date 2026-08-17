@@ -90,6 +90,26 @@ time; once every racer has finished (or a straggler timeout passes), a full
 
 ## Notes on how it works
 
+- **Driving physics is a real force model, not a flat accel curve.** The
+  "CAR PHYSICS" section in `js/main.js` (`update()`) replaced the old fixed
+  accel/turn-rate numbers with the model described at
+  https://rsms.me/etc/car-physics/ (a writeup of Marco Monster's "Car
+  Physics for Games"): engine force vs. quadratic drag + rolling
+  resistance for speed (top speed now emerges from that balance, it's not
+  a hard clamp), and slip-angle tire forces per axle for cornering, with
+  weight transfer shifting grip between the front and rear axle under
+  accel/braking. Push a corner too hard and an axle actually loses grip
+  instead of just turning at a fixed rate — including genuine spin-outs;
+  there's no artificial clamp stopping the car's heading from diverging
+  from the road's anymore. The constants aren't the article's real-world
+  SI values — they're picked to land the car's baseline feel (accel, top
+  speed, braking) close to this game's own already-tuned numbers, with the
+  new physics on top. Below ~0.5 world-units/sec of forward speed
+  (standing still or reversing) it falls back to a plain turn rate instead
+  — the slip-angle math depends on `atan2` against the car's own forward
+  speed and gets unstable/discontinuous close to a standstill, and this
+  game's reverse is really just a back-up utility, not a driving mode
+  worth full tire physics.
 - **The road itself curves and climbs.** `curvatureAt(s)` and
   `elevationAt(s)` (in `js/main.js`) are small sums of sine waves in terms of
   distance-traveled `s`. Each frame, the car's heading is integrated forward
