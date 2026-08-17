@@ -109,7 +109,27 @@ time; once every racer has finished (or a straggler timeout passes), a full
   — the slip-angle math depends on `atan2` against the car's own forward
   speed and gets unstable/discontinuous close to a standstill, and this
   game's reverse is really just a back-up utility, not a driving mode
-  worth full tire physics.
+  worth full tire physics. Grip (`TIRE_GRIP_MU`, cornering stiffness) is
+  tuned so an everyday turn has real headroom — losing grip and spinning
+  out takes genuinely hard, sustained steering at speed, not routine
+  cornering — and `YAW_DAMPING` adds a bit of extra yaw-rate decay standing
+  in for the steering self-centering/tire scrub the pure bicycle model
+  doesn't otherwise capture. Holding the brake once you're essentially
+  stopped shifts into a dedicated, gentler `REVERSE_FORCE` instead of
+  reusing full brake strength — backing up shouldn't feel like slamming
+  the brakes.
+- **Wheels actually turn now — rolling and steering both.** Previously
+  nothing on the car ever spun; only the front wheels' steering angle was
+  animated. `findCarWheels()` (`js/main.js`) looks for any node whose name
+  contains "wheel" inside a loaded car model, classifies front/rear and
+  left/right purely from each one's own world position (so it needs no
+  per-car hardcoding), and wraps the two front ones in their own steering
+  pivot — the same idea the placeholder car's own `frontWheelPivots`
+  already used — so steering and rolling animate on independent axes
+  instead of fighting over the same one. `placeholderWheelSpin()` gives the
+  primitive fallback car the same rolling animation. A model with no
+  separately-named wheel nodes (a single fused body mesh) just keeps
+  looking static, same as before this existed — never a hard requirement.
 - **The road itself curves and climbs.** `curvatureAt(s)` and
   `elevationAt(s)` (in `js/main.js`) are small sums of sine waves in terms of
   distance-traveled `s`. Each frame, the car's heading is integrated forward

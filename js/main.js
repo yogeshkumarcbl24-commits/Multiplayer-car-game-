@@ -669,6 +669,10 @@
   });
 
   var wheelGeo = new THREE.CylinderGeometry(0.36, 0.36, 0.3, 14);
+  // Every wheel mesh gets collected here so its rolling spin can be
+  // animated each frame (placeholderWheelSpin below) -- separate from
+  // steering, which for the front wheels is still the pivot's own job.
+  var placeholderWheelMeshes = [];
   // Front wheels sit inside their own pivot group so they can turn on their
   // own axis with the steering input, same as a real steering knuckle --
   // the wheel mesh is centered in the pivot, and the pivot carries the
@@ -676,6 +680,7 @@
   var frontWheelPivots = [-0.86, 0.86].map(function(x){
     var wheel = new THREE.Mesh(wheelGeo, wheelMat);
     wheel.rotation.z = Math.PI/2;
+    placeholderWheelMeshes.push(wheel);
     var pivot = new THREE.Group();
     pivot.position.set(x, 0.36, -1.15);
     pivot.add(wheel);
@@ -686,8 +691,17 @@
     var wheel = new THREE.Mesh(wheelGeo, wheelMat);
     wheel.rotation.z = Math.PI/2;
     wheel.position.set(p[0], p[1], p[2]);
+    placeholderWheelMeshes.push(wheel);
     carPlaceholder.add(wheel);
   });
+  // Rolling spin lives on rotation.y, applied (per Euler XYZ composition
+  // order) *before* the fixed rotation.z=PI/2 that lies the cylinder on
+  // its side -- so it spins around the cylinder's own original axle axis
+  // (real rolling), not around the axle's own length (which would just
+  // spin it in place like a coin).
+  function placeholderWheelSpin(angle){
+    for (var i = 0; i < placeholderWheelMeshes.length; i++) placeholderWheelMeshes[i].rotation.y = angle;
+  }
 
   [-0.55,0.55].forEach(function(x){
     var hl = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.14, 0.06), headlightMat);
@@ -763,6 +777,76 @@
   var loadedCarModel = null; // the currently-attached real model, if any, so switching cars can remove the old one
   var carLoadToken = 0;      // bumped on every selection change, so a slow load that finishes after the user
                               // picked something else knows to discard its own result instead of attaching stale geometry
+  // Finds real wheel geometry inside a loaded car model, if any, so it can
+  // actually spin/steer instead of sitting static -- generic by name match
+  // ("wheel" anywhere in a node's name, case-insensitive) rather than
+  // hardcoded per car, so any future car model with sensibly-named wheel
+  // nodes picks this up automatically. Classifies front/rear and left/right
+  // by each candidate's own WORLD position (must be called after the
+  // model's fit/yaw/ground transform and an updateMatrixWorld) relative to
+  // the model's own world-space center, so it's correct regardless of the
+  // model's original authored orientation. Models with no separately-
+  // named wheel nodes (a single fused body mesh, common for simpler
+  // models) just get an empty result -- they keep looking static, same as
+  // before this existed, never a hard requirement.
+  // Wraps a wheel node in its own steering pivot, sibling to wherever it
+  // already lives in the model's hierarchy -- exactly the placeholder
+  // car's own frontWheelPivots idea, so steering (the pivot's rotation.y)
+  // and rolling (the wheel's own rotation.y, independent since a child's
+  // local rotation doesn't inherit its parent's) can each own their own
+  // axis instead of fighting over the same one.
+  function riggedSteerPivot(wheelNode){
+    var pivot = new THREE.Group();
+    pivot.position.copy(wheelNode.position);
+    wheelNode.parent.add(pivot);
+    pivot.add(wheelNode);
+    wheelNode.position.set(0, 0, 0);
+    return pivot;
+  }
+
+  function findCarWheels(model){
+    var candidates = [];
+    model.traverse(function(o){
+      if (/wheel/i.test(o.name || '')){
+        candidates.push({ node: o, pos: o.getWorldPosition(new THREE.Vector3()) });
+      }
+    });
+    if (candidates.length < 2) return null; // not enough to make sense of front/rear, left/right
+
+    var box = new THREE.Box3().setFromObject(model);
+    var centerZ = box.getCenter(new THREE.Vector3()).z;
+    var wheels = {};
+    candidates.forEach(function(c){
+      var frontKey = c.pos.z < centerZ ? 'front' : 'rear'; // this game's forward is -Z
+      var sideKey = c.pos.x < 0 ? 'Left' : 'Right';
+      c.node.userData.baseRotation = c.node.rotation.clone(); // preserve however this wheel was originally authored
+      if (frontKey === 'front'){
+        wheels[sideKey === 'Left' ? 'frontLeftPivot' : 'frontRightPivot'] = riggedSteerPivot(c.node);
+      }
+      wheels[frontKey + sideKey] = c.node;
+    });
+    return wheels; // any key not found (including the two pivots, rear cars) is simply left undefined
+  }
+
+  // Called each frame for any car (player or ghost) whose loaded model had
+  // real wheels findCarWheels could identify. Rolling spin applies to
+  // rotation.y on every wheel found (see the placeholder's own
+  // placeholderWheelSpin for why that's the correct axis -- same assumed
+  // convention here, a reasonable default for how these models are
+  // authored, not a guarantee for every possible model); steering only
+  // touches the two front pivots, independently.
+  function animateCarModelWheels(wheels, spinAngle, steerAngle){
+    if (!wheels) return;
+    ['frontLeft', 'frontRight', 'rearLeft', 'rearRight'].forEach(function(key){
+      var node = wheels[key];
+      if (!node) return;
+      var base = node.userData.baseRotation;
+      node.rotation.set(base.x, base.y + spinAngle, base.z);
+    });
+    if (wheels.frontLeftPivot) wheels.frontLeftPivot.rotation.y = steerAngle;
+    if (wheels.frontRightPivot) wheels.frontRightPivot.rotation.y = steerAngle;
+  }
+
   // Shared by the player's own car and any ghost car (the computer
   // opponent, or a networked player) that wants a real model instead of
   // its primitive placeholder -- fetches, scales to CAR_TARGET_LENGTH
@@ -790,6 +874,8 @@
       model.position.x -= center.x;
       model.position.z -= center.z;
       model.position.y -= box.min.y;
+      model.updateMatrixWorld(true);
+      model.userData.wheels = findCarWheels(model);
       onLoaded(model);
     }, undefined, function(err){
       if (onFailed) onFailed(err);
@@ -1133,6 +1219,8 @@
   var carHeading = 0; // the car's own facing angle -- changes ONLY from steering input, never auto-follows the road's curve
   var yawRate = 0;    // how fast carHeading is currently rotating, rad/sec -- driven by tire forces, see CAR PHYSICS below
   var lastLongAccel = 0; // previous frame's forward accel, m/s^2-ish -- used one frame stale for weight transfer, plenty stable for this
+  var wheelSpinAngle = 0; // accumulated rolling rotation for any real car model's real wheel nodes -- see findCarWheels
+  var WHEEL_RADIUS = 0.35; // world units -- how fast that spin looks for a given speed
   var TURN_RATE = 1.5; // rad/sec of turn at full steer -- only used as a low-speed/reverse fallback now, see CAR PHYSICS
   var MAX_STEER_ANGLE = 0.5; // rad the front wheels visibly turn at full steer input (~29 degrees)
 
@@ -1153,13 +1241,23 @@
   var CG_TO_FRONT = 1.15;             // b: center of gravity to front axle
   var CG_TO_REAR = WHEELBASE - CG_TO_FRONT; // c
   var CG_HEIGHT = 0.55;                // h -- modest on purpose: noticeable weight transfer, not wild
-  var YAW_INERTIA = CAR_MASS * WHEELBASE * WHEELBASE / 12; // solid-rod approximation
-  var CORNERING_STIFFNESS_F = 10.5 * CAR_MASS; // Ca, front
-  var CORNERING_STIFFNESS_R = 11.5 * CAR_MASS; // Ca, rear -- a bit stiffer than the front, so the default
-                                                 // balance gently understeers (front slips first) rather than snap-oversteering
-  var TIRE_GRIP_MU = 1.35;            // available grip coefficient; each axle's max lateral force is this * that axle's own load
+  var YAW_INERTIA = CAR_MASS * WHEELBASE * WHEELBASE / 12 * 1.5; // solid-rod approximation, scaled up a bit --
+                                                                   // pure bicycle-model inertia turned out twitchier
+                                                                   // than it should for everyday steering
+  var YAW_DAMPING = 1.4; // extra yaw-rate decay (rad/s per rad/s) standing in for steering self-centering/tire
+                          // scrub the pure bicycle model doesn't capture -- without this a slide has no natural
+                          // "settle back down" and normal turns could tip into a spin more easily than they should
+  var CORNERING_STIFFNESS_F = 8.5 * CAR_MASS; // Ca, front -- softened from the initial pass so turn-in is
+                                                // progressive instead of snapping toward the grip limit
+  var CORNERING_STIFFNESS_R = 9.5 * CAR_MASS; // Ca, rear -- a bit stiffer than the front, so the default
+                                                // balance gently understeers (front slips first) rather than snap-oversteering
+  var TIRE_GRIP_MU = 1.7;             // available grip coefficient; each axle's max lateral force is this * that axle's own
+                                        // load. Raised so normal cornering has real headroom -- spinning out now
+                                        // takes genuinely hard/sustained steering at speed, not a routine turn
   var ENGINE_MAX_FORCE = CAR_MASS * 12; // full-throttle force -- reproduces the old ACCEL=12 feel at a standstill
   var BRAKE_FORCE = CAR_MASS * 22;      // reproduces the old BRAKE_DECEL=22 feel
+  var REVERSE_FORCE = CAR_MASS * 7;     // dedicated reverse accel (gentler than braking) once already stopped/reversing --
+                                          // holding brake at a standstill shifts into this instead of reusing full brake force
   var DRAG_COEF = 20;                   // quadratic air drag -- dominates at speed; this (not a hard clamp) is what caps top speed now
   var ROLL_COEF = 30;                   // linear rolling resistance -- matters most at low speed
 
@@ -2169,6 +2267,13 @@
     frontWheelPivots[1].rotation.y = steerAngle;
     var delta = steerSmooth * MAX_STEER_ANGLE; // front wheel steering angle, same sign convention as carHeading's own increase = turning right
 
+    // Rolling: every wheel actually turns with distance traveled now,
+    // placeholder or real model -- previously nothing spun at all, only
+    // the front wheels' steering angle was ever animated.
+    wheelSpinAngle += (speed / WHEEL_RADIUS) * dt;
+    placeholderWheelSpin(wheelSpinAngle);
+    if (loadedCarModel) animateCarModelWheels(loadedCarModel.userData.wheels, wheelSpinAngle, steerAngle);
+
     if (speed > 0.5){
       // Real slip-angle tire model: front/rear cornering force from how
       // much each axle's actual velocity direction disagrees with where
@@ -2200,7 +2305,7 @@
       var latR = Math.max(-wr * TIRE_GRIP_MU, Math.min(wr * TIRE_GRIP_MU, CORNERING_STIFFNESS_R * slipR));
 
       var yawTorque = Math.cos(delta) * latF * CG_TO_FRONT - latR * CG_TO_REAR;
-      yawRate += (yawTorque / YAW_INERTIA) * dt;
+      yawRate += (yawTorque / YAW_INERTIA - YAW_DAMPING * yawRate) * dt;
 
       var corneringForce = latR + Math.cos(delta) * latF;
       lateralVelocity += (corneringForce / CAR_MASS - speed * yawRate) * dt;
@@ -2234,7 +2339,11 @@
     } else if (input.boost){
       longForce = throttleForce - dragForce - rollForce;
     } else if (input.brake){
-      longForce = -BRAKE_FORCE - dragForce - rollForce;
+      // Real braking while still rolling forward of any real speed; once
+      // you're essentially stopped (or already reversing), holding brake
+      // shifts into a dedicated, gentler reverse gear instead of reusing
+      // full brake force -- backing up shouldn't feel like slamming the brakes.
+      longForce = (speed > 0.5 ? -BRAKE_FORCE : -REVERSE_FORCE) - dragForce - rollForce;
     } else {
       longForce = -dragForce - rollForce;
     }
