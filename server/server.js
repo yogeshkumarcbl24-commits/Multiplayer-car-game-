@@ -85,6 +85,7 @@ function createRoom(code) {
     code: code,
     players: new Map(),
     nextId: 1,
+    hostId: null, // whoever created the room -- only this player may pick the duration and start the race
     race: { state: 'lobby', seed: null, startAt: null, endsAt: null, finishDistance: BASE_FINISH_DISTANCE },
     raceTimeoutHandle: null
   };
@@ -93,6 +94,7 @@ function createRoom(code) {
 function rosterPayload(room) {
   return {
     type: 'roster',
+    hostId: room.hostId,
     race: room.race,
     players: Array.from(room.players.values()).map(function (p) {
       return {
@@ -145,6 +147,7 @@ wss.on('connection', function (ws) {
       room = createRoom(code);
       rooms.set(code, room);
       myId = room.nextId++;
+      room.hostId = myId;
       room.players.set(myId, makePlayer(myId, ws, msg));
       ws.send(JSON.stringify({ type: 'roomCreated', code: code, id: myId }));
       broadcastToRoom(room, rosterPayload(room));
@@ -186,6 +189,7 @@ wss.on('connection', function (ws) {
       }, myId);
 
     } else if (msg.type === 'startRace') {
+      if (myId !== room.hostId) return; // only the room's creator picks the length and starts the race
       if (room.race.state === 'lobby' || room.race.state === 'finished') {
         if (room.raceTimeoutHandle) { clearTimeout(room.raceTimeoutHandle); room.raceTimeoutHandle = null; }
         var duration = Math.min(MAX_DURATION_MS, Math.max(MIN_DURATION_MS, Number(msg.duration) || DEFAULT_DURATION_MS));
@@ -241,6 +245,11 @@ wss.on('connection', function (ws) {
     if (room.players.size === 0) {
       if (room.raceTimeoutHandle) clearTimeout(room.raceTimeoutHandle);
       rooms.delete(room.code);
+    } else if (room.hostId === myId) {
+      // host left -- hand hosting to whoever's been in the room longest,
+      // so the remaining players aren't stuck with nobody able to start
+      room.hostId = Math.min.apply(null, Array.from(room.players.keys()));
+      broadcastToRoom(room, rosterPayload(room));
     }
   });
 });

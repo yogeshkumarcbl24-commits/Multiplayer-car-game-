@@ -784,6 +784,8 @@
   var laneOffset = 0;
   var steerSmooth = 0;
   var LANE_STEER_SPEED = 8; // units/sec of lateral movement at full steer -- direct lane control, no drift physics
+  var carHeading = 0; // the car's own facing angle -- changes ONLY from steering input, never auto-follows the road's curve
+  var TURN_RATE = 1.6; // rad/sec of visual turn at full steer
 
   window.addEventListener('keydown', function(e){
     if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') input.left = true;
@@ -1021,15 +1023,21 @@
   var myName = 'Racer ' + (100 + Math.floor(Math.random() * 900));
   var myColor = PLAYER_COLORS[0];
   var DURATION_OPTIONS = [60, 120, 180, 300];
-  var myDuration = 120000;
+  var DEFAULT_RACE_DURATION_MS = 120000; // mirrors server/server.js's DEFAULT_DURATION_MS
+  var BASE_FINISH_DISTANCE = 1250; // mirrors server/server.js's BASE_FINISH_DISTANCE
+  var COUNTDOWN_MS = 3000; // mirrors server/server.js's COUNTDOWN_MS -- used for the local computer race, which has no server round-trip to get this from
+  var myDuration = DEFAULT_RACE_DURATION_MS;
+  var soloDuration = DEFAULT_RACE_DURATION_MS; // race length picked for a vs-computer race (separate from the multiplayer room's choice)
   var raceState = 'solo'; // 'solo' | 'lobby' | 'countdown' | 'racing' | 'finished'
+  var raceMode = null; // null (free practice) | 'bot' (vs computer) | 'multiplayer'
+  var amHost = false; // multiplayer only -- whether *I* am the room's creator, allowed to pick duration + start
   var lastHandledRaceState = null;
   var raceStartPerf = 0;
   var localFinished = false;
   var myFinishTime = null;
-  var finishDistance = 1250; // world units (~3000 displayed metres); the server scales this
-                              // per-race to match the chosen race duration -- see the
-                              // 'raceStart' handler below, which overwrites it from msg.finishDistance
+  var finishDistance = BASE_FINISH_DISTANCE; // world units (~3000 displayed metres); scaled per-race to
+                              // match the chosen race duration -- see the 'raceStart' handler and
+                              // startBotRace() below, which overwrite it for their respective modes
   var finishGate = null;
   var lastNetSend = 0;
 
@@ -1112,7 +1120,12 @@
     return tex;
   }
 
-  var remotePlayers = {}; // id -> { group, nameSprite, color, name, targetDist, targetLane, dispDist, dispLane, finished, finishTime }
+  var remotePlayers = {}; // id -> { group, nameSprite, color, name, targetDist, targetLane, dispDist, dispLane, finished, finishTime, isBot }
+  var BOT_ID = 'bot'; // the vs-computer racer lives in remotePlayers like any networked opponent -- same
+                       // rendering, leaderboard, ramming and catch-up-boost code paths, no special-casing needed there
+  var botTimeoutHandle = null;
+  var botAvgSpeed = 0; // world units/sec the computer aims for this race, set per-race in startBotRace()
+  var botSpeedWander = 0; // slow +/- drift so the computer's pace doesn't look perfectly robotic
 
   function ensureRemotePlayer(id, name, color){
     var rp = remotePlayers[id];
@@ -1147,6 +1160,91 @@
     if (!rp) return;
     scene.remove(rp.group);
     delete remotePlayers[id];
+  }
+
+  function positionRemotePlayer(rp, dist, lane){
+    var f = sampleAt(dist);
+    var px = Math.cos(f.heading), pz = Math.sin(f.heading);
+    rp.group.position.set(f.x + px*lane, f.y + 0.02, f.z + pz*lane);
+    rp.group.rotation.y = -f.heading;
+    rp.group.rotation.z = f.bank;
+  }
+
+  /* ============================================================
+     SOLO VS. COMPUTER: a locally-simulated opponent, no server
+     needed. It's just another entry in remotePlayers, so rendering,
+     ramming/shooting, the leaderboard, results, and catch-up boost
+     all already work for it with no special-casing there.
+  ============================================================ */
+  function resetRacePhysics(){
+    worldDistance = 0; localFinished = false; myFinishTime = null;
+    steerSmooth = 0; lateralVelocity = 0; carHeading = 0;
+    finishToastEl.hidden = true;
+    raceResultsEl.hidden = true;
+    gate.classList.add('gone');
+  }
+
+  function stopBotRacer(){
+    if (botTimeoutHandle) { clearTimeout(botTimeoutHandle); botTimeoutHandle = null; }
+    removeRemotePlayer(BOT_ID);
+  }
+
+  function startBotRace(durationMs){
+    raceMode = 'bot';
+    stopBotRacer(); // clear out any previous computer racer before starting fresh
+    resetRacePhysics();
+    finishDistance = Math.round(BASE_FINISH_DISTANCE * (durationMs / DEFAULT_RACE_DURATION_MS));
+    resetTrack(Math.floor(Math.random() * 1e9));
+
+    var bot = ensureRemotePlayer(BOT_ID, 'Computer', PLAYER_COLORS[1]);
+    bot.isBot = true;
+    // aim the computer's average pace at roughly the chosen race length, with
+    // some per-race randomness so it isn't always exactly as fast (or slow) as you
+    botAvgSpeed = (finishDistance / (durationMs/1000)) * (0.85 + Math.random()*0.3);
+    botSpeedWander = 0;
+
+    // line up side-by-side on the starting grid, same idea as the multiplayer grid
+    var gridSpacing = Math.min(2.3, maxLane*2);
+    laneOffset = -gridSpacing/2;
+    bot.targetDist = bot.dispDist = 0;
+    bot.targetLane = bot.dispLane = gridSpacing/2;
+    positionRemotePlayer(bot, 0, bot.dispLane);
+
+    var startFrame = sampleAt(0);
+    var startPx = Math.cos(startFrame.heading), startPz = Math.sin(startFrame.heading);
+    car.position.set(startFrame.x + startPx*laneOffset, startFrame.y + 0.02, startFrame.z + startPz*laneOffset);
+    car.rotation.y = -carHeading;
+
+    var startAt = Date.now() + COUNTDOWN_MS;
+    raceEndsAt = startAt + durationMs;
+    botTimeoutHandle = setTimeout(concludeSoloRace, COUNTDOWN_MS + durationMs);
+    raceState = 'countdown';
+    startCountdown(startAt);
+    setTimeout(function(){ if (raceState === 'countdown') raceState = 'racing'; }, Math.max(0, startAt - Date.now()));
+  }
+
+  function updateBot(dt){
+    if (raceMode !== 'bot') return;
+    var bot = remotePlayers[BOT_ID];
+    if (!bot || bot.finished || raceState !== 'racing') return;
+    // gentle random wander around the target pace so it doesn't feel robotic
+    botSpeedWander += (Math.random()-0.5) * dt * 6;
+    botSpeedWander = Math.max(-6, Math.min(6, botSpeedWander));
+    var v = Math.max(4, botAvgSpeed + botSpeedWander);
+    bot.targetDist += v * dt;
+    bot.targetLane = Math.sin(bot.targetDist * 0.05) * (maxLane * 0.4); // cosmetic weave, not real steering
+    if (bot.targetDist >= finishDistance){
+      bot.targetDist = finishDistance;
+      bot.finished = true;
+      bot.finishTime = (performance.now() - raceStartPerf) / 1000;
+    }
+  }
+
+  function concludeSoloRace(){
+    if (raceMode !== 'bot' || raceState === 'finished') return;
+    if (botTimeoutHandle) { clearTimeout(botTimeoutHandle); botTimeoutHandle = null; }
+    raceState = 'finished';
+    showRaceResults();
   }
 
   function ensureFinishGate(){
@@ -1225,6 +1323,12 @@
         '<span class="results-time">' + (r.finished ? r.finishTime.toFixed(1) + 's' : 'DNF') + '</span>' +
         '</div>';
     }).join('');
+    // In a multiplayer room, only the host can fire off another race --
+    // everyone else just waits, same restriction as the lobby's Start Race.
+    var canRaceAgain = raceMode !== 'multiplayer' || amHost;
+    raceAgainBtn.hidden = !canRaceAgain;
+    resultsHostHintEl.hidden = canRaceAgain;
+
     raceResultsEl.hidden = false;
     document.getElementById('finish-toast').hidden = true;
   }
@@ -1394,7 +1498,7 @@
         if (hdx*hdx + hdy*hdy + hdz*hdz < HIT_RADIUS*HIT_RADIUS){
           hit = true;
           target.hitCooldown = 1.2;
-          Net.send({ type:'shot', targetId: Number(rid3) });
+          if (!target.isBot) Net.send({ type:'shot', targetId: Number(rid3) });
           break;
         }
       }
@@ -1405,19 +1509,12 @@
     }
   }
 
-  var EDGE_ZONE = 0.12; // how close to the clamp counts as "touching" the very edge/shoulder
-  var EDGE_DRAG = 16; // extra deceleration while riding the edge -- like scraping the shoulder
-
   function update(dt){
     prevSpeed = speed;
     var frozen = localFinished || exploded;
     var boost = catchUpBoost();
     var effMaxSpeed = MAX_SPEED + boost;
     var effAccel = ACCEL + boost*0.6;
-    // laneOffset here is still last frame's position -- one-frame-old, but
-    // that's imperceptible and lets the edge-drag react in the same block
-    // as every other speed change instead of needing a second pass.
-    var onEdge = !frozen && Math.abs(laneOffset) >= maxLane - EDGE_ZONE;
     if (frozen){
       speed = Math.max(0, speed - COAST_DRAG*1.4*dt);
     } else if (input.boost){
@@ -1429,12 +1526,16 @@
     } else if (speed < 0){
       speed = Math.min(0, speed + COAST_DRAG*dt);
     }
-    if (onEdge && speed > 0) speed = Math.max(0, speed - EDGE_DRAG*dt); // touching the road's edge scrubs speed
     speed = Math.max(MAX_REVERSE, Math.min(effMaxSpeed, speed));
     var accel = (speed - prevSpeed) / Math.max(dt, 0.0001);
 
     var rawSteer = frozen ? 0 : ((input.right?1:0) - (input.left?1:0) + pointerSteer);
     steerSmooth += (rawSteer - steerSmooth) * Math.min(1, dt*9);
+
+    // The car's facing direction is free-running -- it only changes from
+    // steering input, and otherwise holds wherever it was last pointed even
+    // as the road curves underneath it. It never auto-aligns to the road.
+    carHeading += steerSmooth * TURN_RATE * dt;
 
     lateralVelocity *= Math.max(0, 1 - dt*4.5); // drag -- a knockback slide settles out
 
@@ -1442,6 +1543,7 @@
     if (localFinished) worldDistance = Math.min(worldDistance, finishDistance);
     ensureChunks(worldDistance);
     ensureFinishGate();
+    updateBot(dt);
 
     if (!localFinished && worldDistance >= finishDistance){
       localFinished = true;
@@ -1449,6 +1551,13 @@
       document.getElementById('finish-time').textContent = myFinishTime.toFixed(1) + 's';
       document.getElementById('finish-toast').hidden = false;
       Net.send({ type:'finish', time: myFinishTime });
+    }
+
+    // vs-computer races end as soon as both racers have crossed the line --
+    // same "everybody's done" idea as the server's multiplayer concludeRace,
+    // just decided locally since there's no server for a solo race
+    if (raceMode === 'bot' && raceState === 'racing' && localFinished && remotePlayers[BOT_ID] && remotePlayers[BOT_ID].finished){
+      concludeSoloRace();
     }
 
     var frame = sampleAt(worldDistance);
@@ -1468,7 +1577,7 @@
 
     car.position.set(frame.x + px*laneOffset, frame.y + 0.02 + bob, frame.z + pz*laneOffset);
     var slope = slopeAt(worldDistance);
-    car.rotation.y = -frame.heading - steerSmooth*0.22; // follows the road, with a clear turn-in while steering
+    car.rotation.y = -carHeading; // the car's own heading -- never tied to the road's, only to steering
     car.rotation.x = reduceMotion ? 0 : Math.atan(slope) - accel*0.0035;
     car.rotation.z = reduceMotion ? 0 : frame.bank - steerSmooth*0.12 + Math.sin(t*8)*0.01; // lean into the turn
 
@@ -1558,7 +1667,7 @@
           // is only used to apply damage on the other side, so a mutual ram
           // can't double-count health loss the way a shared local hit would.
           applyPhysicalHit(knockDir, 0.4);
-          Net.send({ type:'bump', targetId: Number(rid) });
+          if (!rp.isBot) Net.send({ type:'bump', targetId: Number(rid) });
         }
       }
     }
@@ -1612,6 +1721,10 @@
   var roomCopiedEl = document.getElementById('room-copied');
   var playerListEl = document.getElementById('player-list');
   var raceBtn = document.getElementById('race-btn');
+  var durationRowEl = document.getElementById('duration-row');
+  var hostWaitHintEl = document.getElementById('host-wait-hint');
+  var resultsHostHintEl = document.getElementById('results-host-hint');
+  var raceAgainBtn = document.getElementById('race-again-btn');
   var countdownOverlay = document.getElementById('countdown-overlay');
   var countdownNum = document.getElementById('countdown-num');
   var finishToastEl = document.getElementById('finish-toast');
@@ -1646,20 +1759,28 @@
     swatchesEl.appendChild(b);
   });
 
-  var durationChipsEl = document.getElementById('duration-chips');
-  DURATION_OPTIONS.forEach(function(secs){
-    var b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'duration-chip' + (secs*1000 === myDuration ? ' selected' : '');
-    b.textContent = Math.floor(secs/60) + ':' + String(secs%60).padStart(2,'0');
-    b.addEventListener('click', function(){
-      myDuration = secs*1000;
-      var all = durationChipsEl.querySelectorAll('.duration-chip');
-      for (var i3=0;i3<all.length;i3++) all[i3].classList.remove('selected');
-      b.classList.add('selected');
+  // Builds a row of duration chips into `containerEl`, reading/writing the
+  // chosen value through get()/set() -- used for both the multiplayer room's
+  // duration (host-only) and the solo vs-computer race length independently.
+  function buildDurationChips(containerEl, get, set){
+    DURATION_OPTIONS.forEach(function(secs){
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'duration-chip' + (secs*1000 === get() ? ' selected' : '');
+      b.textContent = Math.floor(secs/60) + ':' + String(secs%60).padStart(2,'0');
+      b.addEventListener('click', function(){
+        set(secs*1000);
+        var all = containerEl.querySelectorAll('.duration-chip');
+        for (var i3=0;i3<all.length;i3++) all[i3].classList.remove('selected');
+        b.classList.add('selected');
+      });
+      containerEl.appendChild(b);
     });
-    durationChipsEl.appendChild(b);
-  });
+  }
+  buildDurationChips(document.getElementById('duration-chips'),
+    function(){ return myDuration; }, function(v){ myDuration = v; });
+  buildDurationChips(document.getElementById('solo-duration-chips'),
+    function(){ return soloDuration; }, function(v){ soloDuration = v; });
 
   function sendJoin(){
     Net.send({ type:'join', name: myName, color: myColor });
@@ -1739,10 +1860,15 @@
     beginDriving();
   });
 
+  document.getElementById('bot-race-btn').addEventListener('click', function(){
+    startBotRace(soloDuration);
+  });
+
   raceBtn.addEventListener('click', requestRace);
-  document.getElementById('race-again-btn').addEventListener('click', function(){
+  raceAgainBtn.addEventListener('click', function(){
     raceResultsEl.hidden = true;
-    requestRace();
+    if (raceMode === 'bot') startBotRace(soloDuration);
+    else requestRace();
   });
 
   Net.on('unavailable', function(){
@@ -1758,13 +1884,23 @@
     mpSetupEl.hidden = true;
     myRoomCode = null;
   });
+  function updateHostUI(){
+    durationRowEl.hidden = !amHost;
+    raceBtn.hidden = !amHost;
+    hostWaitHintEl.hidden = amHost;
+  }
+
   Net.on('roomCreated', function(msg){
     myId = msg.id;
+    amHost = true; // the creator is always the initial host
     enterRoom(msg.code);
+    updateHostUI();
   });
   Net.on('roomJoined', function(msg){
     myId = msg.id;
+    amHost = false; // joiners only join -- the next 'roster' message confirms the real host
     enterRoom(msg.code);
+    updateHostUI();
   });
   Net.on('roomNotFound', function(msg){
     roomErrorEl.textContent = 'Room "' + msg.code + '" not found — check the code and try again.';
@@ -1772,6 +1908,8 @@
   });
   Net.on('roster', function(msg){
     renderPlayerList(msg.players);
+    amHost = msg.hostId === myId; // authoritative -- also catches host reassignment if the host disconnects
+    updateHostUI();
     var seenIds = {};
     msg.players.forEach(function(p){
       seenIds[p.id] = true;
@@ -1829,13 +1967,14 @@
     }, RESPAWN_DELAY*1000);
   });
   Net.on('raceStart', function(msg){
+    raceMode = 'multiplayer';
+    stopBotRacer(); // in case a computer race was somehow still active
     raceState = 'countdown';
     lastHandledRaceState = 'countdown';
     raceEndsAt = msg.endsAt || null;
     finishDistance = msg.finishDistance || finishDistance;
     resetTrack(msg.seed);
-    worldDistance = 0; localFinished = false; myFinishTime = null;
-    steerSmooth = 0; lateralVelocity = 0;
+    resetRacePhysics();
 
     // line everyone up side-by-side on a starting grid instead of stacking
     // every car on lane 0 -- same ID ordering on every client (sorted
@@ -1852,11 +1991,8 @@
     var startFrame = sampleAt(worldDistance);
     var startPx = Math.cos(startFrame.heading), startPz = Math.sin(startFrame.heading);
     car.position.set(startFrame.x + startPx*laneOffset, startFrame.y + 0.02, startFrame.z + startPz*laneOffset);
-    car.rotation.y = -startFrame.heading;
+    car.rotation.y = -carHeading; // fresh heading (0), just reset above -- not tied to the road's heading
 
-    finishToastEl.hidden = true;
-    raceResultsEl.hidden = true;
-    gate.classList.add('gone');
     running = false;
     startCountdown(msg.startAt);
     setTimeout(function(){ if (raceState === 'countdown') raceState = 'racing'; }, Math.max(0, msg.startAt - Date.now()));

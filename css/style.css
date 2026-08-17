@@ -564,6 +564,7 @@ h1 em{
   flex-wrap:wrap;
   margin-bottom:14px;
 }
+#duration-row[hidden]{ display:none; } /* the multiplayer room's row is toggled by host status -- .duration-row's own display:flex would otherwise win over the default [hidden] rule */
 .duration-label{
   font-size:10.5px;
   letter-spacing:0.1em;
@@ -588,6 +589,21 @@ h1 em{
   color:var(--fog-text);
   border-color:var(--cyan);
   background:rgba(47,230,255,0.12);
+}
+
+.host-wait-hint{
+  font-size:12px;
+  letter-spacing:0.04em;
+  color:var(--fog-dim);
+  text-align:center;
+  margin:2px 0 14px;
+}
+
+/* ---------- Solo vs. computer panel ---------- */
+.solo-panel{
+  margin:18px 0 6px;
+  padding-top:18px;
+  border-top:1px solid var(--hairline);
 }
 
 .player-list{

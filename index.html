@@ -93,6 +93,7 @@
     <div class="results-title">🏁 Race Results</div>
     <div class="results-rows" id="race-results-rows"></div>
     <button id="race-again-btn" class="btn-primary">Race Again</button>
+    <div class="host-wait-hint" id="results-host-hint" hidden>Only the room's host can start another race.</div>
   </div>
 </div>
 
@@ -123,16 +124,25 @@
           <button type="button" id="copy-room-btn" class="room-copy-btn">Copy link</button>
           <span class="room-copied" id="room-copied" hidden>Copied!</span>
         </div>
-        <div class="duration-row">
+        <div class="duration-row" id="duration-row">
           <span class="duration-label">Race length</span>
           <div class="duration-chips" id="duration-chips"></div>
         </div>
+        <div class="host-wait-hint" id="host-wait-hint" hidden>Only the room's host picks the race length and starts the race &mdash; hang tight.</div>
         <div class="player-list" id="player-list"></div>
         <button id="race-btn" class="btn-primary">Start Race</button>
       </div>
     </div>
 
-    <button id="start-btn" class="btn-ghost">Practice Solo</button>
+    <div class="solo-panel">
+      <div class="duration-row">
+        <span class="duration-label">Race length</span>
+        <div class="duration-chips" id="solo-duration-chips"></div>
+      </div>
+      <button id="bot-race-btn" class="btn-primary">Race vs Computer</button>
+    </div>
+
+    <button id="start-btn" class="btn-ghost">Practice Solo (no timer)</button>
     <div class="gate-foot">Built with three.js &middot; runs entirely in your browser</div>
   </div>
 </div>
