@@ -23,9 +23,12 @@ card-drive/
 │   └── GLTFLoader.js       three.js's model loader, adapted from examples/jsm into a plain script
 ├── assets/
 │   └── models/
-│       ├── hyper-gt.glb    the car model (falls back to a built-in placeholder if missing)
-│       ├── tree.glb        real tree, swapped in over the procedural pine once loaded
-│       └── grass.glb       ground-clutter grass clumps (no procedural equivalent)
+│       ├── hyper-gt.glb        selectable car (falls back to the placeholder if missing)
+│       ├── mister-beef.glb     selectable car
+│       ├── fast-charger.glb    selectable car
+│       ├── gt-supercar.glb     selectable car (the heaviest of the four, ~8MB)
+│       ├── tree.glb            real tree, swapped in over the procedural pine once loaded
+│       └── grass.glb           ground-clutter grass clumps (no procedural equivalent)
 ├── server/
 │   └── server.js            multiplayer server: serves the files + relays race state
 ├── build.py                 regenerates ../card-drive.html (the single-file build)
@@ -150,17 +153,22 @@ time; once every racer has finished (or a straggler timeout passes), a full
 - `lib/three.min.js` was vendored from `three@0.160.0` on npm. To update it,
   run `npm install three@<version>` somewhere and copy
   `node_modules/three/build/three.min.js` over this file.
-- **The car is a real model, with a placeholder fallback.** `assets/models/hyper-gt.glb`
-  loads via `lib/GLTFLoader.js` and swaps in over the primitive box-built
-  car once it's ready, auto-scaled/grounded to match the placeholder's
-  footprint (`js/main.js`, the CAR MODEL section). `GLTFLoader.js` is
-  three.js's own loader — it only ships as an ES module in `examples/jsm`,
-  which doesn't fit this project's plain-`<script>` setup, so it's adapted
-  into a global script the same way `js/main.js`'s hand-rolled bloom pass
-  avoids needing `EffectComposer`: only the `import`/`export` lines were
-  touched, the loader body is stock. If the model or loader fails to load
-  for any reason, the primitive car is simply left in place — it's never a
-  hard dependency for the game to run.
+- **Pick a car, with a placeholder fallback.** The gate has a "Choose your
+  car" picker (`CAR_DEFS` in `js/main.js`) backed by four real glTF models
+  in `assets/models/`; the choice persists in `localStorage`. Picking one
+  loads it via `lib/GLTFLoader.js` and swaps it in over the primitive
+  box-built car once ready, auto-scaled/grounded to match the placeholder's
+  footprint. Switching cars again before a slow load finishes doesn't race
+  — `carLoadToken` is bumped on every selection, and a load that resolves
+  after being superseded just discards its own result instead of attaching
+  stale geometry. `GLTFLoader.js` is three.js's own loader — it only ships
+  as an ES module in `examples/jsm`, which doesn't fit this project's
+  plain-`<script>` setup, so it's adapted into a global script the same way
+  `js/main.js`'s hand-rolled bloom pass avoids needing `EffectComposer`:
+  only the `import`/`export` lines were touched, the loader body is stock.
+  If a model or the loader fails to load for any reason, the primitive car
+  is simply left in place — it's never a hard dependency for the game to
+  run.
 - **Trees and grass are real models too, same pattern.** `assets/models/tree.glb`
   and `grass.glb` load the same way as the car. `buildPine()` just checks
   whether the tree model has loaded each time it's called — chunks already
@@ -172,10 +180,13 @@ time; once every racer has finished (or a straggler timeout passes), a full
 
 ## Also available as a single file
 
-A self-contained, single-HTML-file build (three.js *and* the car model
-inlined — the model as a base64 `data:` URI, since the single file has no
-adjacent `assets/` folder to fetch it from) lives at `../card-drive.html`
-one level up — handy for sharing without the folder. **It only ever plays
+A self-contained, single-HTML-file build (three.js *and* all six models
+inlined — each as its own base64 `data:` URI, since the single file has no
+adjacent `assets/` folder to fetch them from) lives at `../card-drive.html`
+one level up — handy for sharing without the folder. It's a genuinely
+large file now (~15MB), almost entirely because of `gt-supercar.glb`
+(~8MB on its own, a much higher-detail model/texture set than the other
+three selectable cars). **It only ever plays
 solo** (`js/net.js` has no server to reach when opened this way, so it
 falls back gracefully). It's generated from this project, not
 hand-maintained: after editing `index.html`, `css/style.css`, `js/net.js`,

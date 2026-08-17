@@ -735,21 +735,47 @@
   scene.add(camera);
 
   /* ============================================================
-     CAR MODEL  (optional real glTF model, swapped in over the
-     primitive placeholder once it's loaded. If lib/GLTFLoader.js
-     didn't load, the file is missing, or parsing fails for any
-     reason, this just quietly leaves the placeholder car in place
-     -- never a hard dependency for the game to run.)
+     CAR MODEL  (pick from a few real glTF models, swapped in over
+     the primitive placeholder once the chosen one loads. If
+     lib/GLTFLoader.js didn't load, a file is missing, or parsing
+     fails for any reason, this just quietly leaves the placeholder
+     car in place -- never a hard dependency for the game to run.)
   ============================================================ */
-  // build.py inlines the actual model as a data: URI (window.CAR_MODEL_DATA_URI)
-  // for the single-file card-drive.html build, since that file has no
-  // adjacent assets/ folder to fetch from; the folder version just fetches
-  // the real file.
-  var CAR_MODEL_URL = window.CAR_MODEL_DATA_URI || 'assets/models/hyper-gt.glb';
   var CAR_TARGET_LENGTH = 3.9; // world units -- close to the placeholder chassis's own length
-  var CAR_MODEL_YAW = Math.PI; // rotation to align the model's forward with the car's own (-Z); tweak if it loads facing backwards
-  if (window.THREE && THREE.GLTFLoader){
-    new THREE.GLTFLoader().load(CAR_MODEL_URL, function(gltf){
+  var CAR_MODEL_YAW = Math.PI; // default rotation to align a model's forward with the car's own (-Z)
+  var CAR_DEFS = [
+    { id: 'hyper-gt',     name: 'Hyper GT',      color: '#ff5a4d', file: 'hyper-gt.glb',     dataUriKey: 'CAR_MODEL_DATA_URI' },
+    { id: 'mister-beef',  name: 'Mister Beef',   color: '#ffcf4d', file: 'mister-beef.glb',  dataUriKey: 'CAR2_MODEL_DATA_URI' },
+    { id: 'fast-charger', name: 'Fast Charger',  color: '#37d6ff', file: 'fast-charger.glb', dataUriKey: 'CAR3_MODEL_DATA_URI' },
+    // gt-supercar.glb comes from a different export tool (SimLab, not
+    // Blender like the other three) and doesn't share their forward-axis
+    // convention -- it was sitting broadside instead of nose-forward with
+    // the shared default, so it gets its own yaw override.
+    { id: 'gt-supercar',  name: 'GT Supercar',   color: '#9b6bff', file: 'gt-supercar.glb',  dataUriKey: 'CAR4_MODEL_DATA_URI', yaw: Math.PI / 2 }
+  ];
+  var CAR_ID_STORAGE_KEY = 'cardDriveCarId';
+  var selectedCarId = CAR_DEFS[0].id;
+  try {
+    var storedCarId = localStorage.getItem(CAR_ID_STORAGE_KEY);
+    if (storedCarId && CAR_DEFS.some(function(d){ return d.id === storedCarId; })) selectedCarId = storedCarId;
+  } catch (e){ /* localStorage can throw in some privacy modes -- just fall back to the default car */ }
+
+  var loadedCarModel = null; // the currently-attached real model, if any, so switching cars can remove the old one
+  var carLoadToken = 0;      // bumped on every selection change, so a slow load that finishes after the user
+                              // picked something else knows to discard its own result instead of attaching stale geometry
+  function loadSelectedCarModel(){
+    if (!(window.THREE && THREE.GLTFLoader)) return;
+    var def = null;
+    for (var i = 0; i < CAR_DEFS.length; i++) if (CAR_DEFS[i].id === selectedCarId) def = CAR_DEFS[i];
+    if (!def) def = CAR_DEFS[0];
+    var myToken = ++carLoadToken;
+    var url = window[def.dataUriKey] || ('assets/models/' + def.file);
+    var card = document.querySelector('.car-card[data-car-id="' + def.id + '"]');
+    if (card) card.classList.add('loading');
+
+    new THREE.GLTFLoader().load(url, function(gltf){
+      if (myToken !== carLoadToken) return; // a newer selection has already superseded this load
+      if (card) card.classList.remove('loading');
       var model = gltf.scene;
       model.traverse(function(o){
         if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; }
@@ -762,7 +788,7 @@
       var size = box.getSize(new THREE.Vector3());
       var scale = CAR_TARGET_LENGTH / Math.max(size.x, size.y, size.z, 0.0001);
       model.scale.setScalar(scale);
-      model.rotation.y = CAR_MODEL_YAW;
+      model.rotation.y = (def.yaw !== undefined) ? def.yaw : CAR_MODEL_YAW;
       model.updateMatrixWorld(true);
 
       box.setFromObject(model);
@@ -771,12 +797,43 @@
       model.position.z -= center.z;
       model.position.y -= box.min.y;
 
+      if (loadedCarModel) car.remove(loadedCarModel);
       carPlaceholder.visible = false;
       car.add(model);
+      loadedCarModel = model;
     }, undefined, function(err){
-      console.warn('Car model failed to load -- using the built-in placeholder car instead.', err);
+      if (myToken !== carLoadToken) return;
+      if (card) card.classList.remove('loading');
+      console.warn('Car model "' + def.name + '" failed to load -- using the built-in placeholder car instead.', err);
     });
   }
+
+  function renderCarPicker(){
+    var wrap = document.getElementById('car-picker');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+    CAR_DEFS.forEach(function(def){
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'car-card' + (def.id === selectedCarId ? ' selected' : '');
+      btn.setAttribute('data-car-id', def.id);
+      btn.innerHTML =
+        '<div class="car-swatch" style="background:' + def.color + '"></div>' +
+        '<div class="car-name">' + def.name + '</div>' +
+        '<div class="car-loading">Loading&hellip;</div>';
+      btn.addEventListener('click', function(){
+        if (selectedCarId === def.id) return;
+        selectedCarId = def.id;
+        try { localStorage.setItem(CAR_ID_STORAGE_KEY, def.id); } catch (e){ /* non-fatal */ }
+        Array.prototype.forEach.call(wrap.children, function(c){ c.classList.remove('selected'); });
+        btn.classList.add('selected');
+        loadSelectedCarModel();
+      });
+      wrap.appendChild(btn);
+    });
+  }
+  renderCarPicker();
+  loadSelectedCarModel();
 
   var camTargetPos = new THREE.Vector3();
   var camLookPos = new THREE.Vector3();

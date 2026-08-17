@@ -29,6 +29,9 @@ gltf_loader = (HERE / "lib" / "GLTFLoader.js").read_text(encoding="utf-8")
 
 MODELS = {
     "CAR_MODEL_DATA_URI": "hyper-gt.glb",
+    "CAR2_MODEL_DATA_URI": "mister-beef.glb",
+    "CAR3_MODEL_DATA_URI": "fast-charger.glb",
+    "CAR4_MODEL_DATA_URI": "gt-supercar.glb",
     "TREE_MODEL_DATA_URI": "tree.glb",
     "GRASS_MODEL_DATA_URI": "grass.glb",
 }
