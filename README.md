@@ -119,6 +119,16 @@ time; once every racer has finished (or a straggler timeout passes), a full
   `js/main.js`) picks which terrain props (pine trees/mountains vs.
   cacti/mesas) get built into each chunk and tints the terrain ribbon's
   vertex colors, so the crossfade has no visible seams.
+- **Bloom is hand-rolled, not an addon.** This project vendors only core
+  three.js (see below), and the official bloom (`UnrealBloomPass` etc.) lives
+  in `examples/jsm` as ES modules that don't fit a plain-`<script>`,
+  no-build-step project. `renderWithBloom` in `js/main.js` does the same idea
+  by hand: render the scene once to an offscreen target, threshold+blur the
+  bright pixels (neon rails, headlights, sun/moon) at a small fixed
+  resolution, then blit scene+glow (plus a touch of film grain) to the
+  canvas in one final pass. Every pass uses the same `#include
+  <tonemapping_fragment>` / `<colorspace_fragment>` chunks three.js's own
+  materials use, so it grades consistently with the rest of the renderer.
 - **Nitro only ever fills from pickups.** Each chunk has a chance of placing
   a glowing orb on the pavement (`buildChunk` in `js/main.js`); driving
   through one (`checkNitroPickups`) tops up the NOS bar. There's no passive

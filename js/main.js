@@ -2126,11 +2126,166 @@
     updateLeaderboard();
   }
 
+  /* ============================================================
+     BLOOM POST-PROCESSING
+     Hand-rolled instead of three.js's EffectComposer/UnrealBloomPass --
+     this project vendors only core three.js (no examples/jsm addons,
+     no build step, see README), and those addons are ES modules that
+     don't fit the plain-<script> single-file build. Same idea though:
+     render the scene once to an offscreen target, extract the bright
+     pixels (the neon rails, headlights, sun/moon, streaks -- anything
+     that was already emissive/near-white), blur them, and add that
+     glow back on top when finally blitting to the canvas. Every pass
+     uses the standard `#include <tonemapping_fragment>` /
+     `<colorspace_fragment>` chunks three.js's own shaders use, so
+     color grading stays consistent with the rest of the renderer.
+  ============================================================ */
+  // Sized to match the renderer's actual drawing-buffer resolution (CSS size
+  // * pixel ratio, same as renderer.setSize/setPixelRatio above) so the
+  // final blit is 1:1 -- no extra softness from a mismatched render target.
+  function currentPixelRatio(){ return Math.min(window.devicePixelRatio || 1, 2); }
+  var sceneRT = new THREE.WebGLRenderTarget(
+    window.innerWidth * currentPixelRatio(), window.innerHeight * currentPixelRatio(),
+    { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, format: THREE.RGBAFormat }
+  );
+  // Bloom is intentionally rendered at a small, fixed resolution -- the
+  // blur only needs to produce a soft wide glow, not a crisp image, and
+  // keeping it fixed-size means the blur cost never scales with the
+  // window/monitor resolution.
+  var BLOOM_W = 480, BLOOM_H = 270;
+  function makeBloomRT(){
+    return new THREE.WebGLRenderTarget(BLOOM_W, BLOOM_H, {
+      minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, format: THREE.RGBAFormat
+    });
+  }
+  var bloomRTA = makeBloomRT();
+  var bloomRTB = makeBloomRT();
+
+  var FS_VERT = [
+    'varying vec2 vUv;',
+    'void main(){',
+    '  vUv = uv;',
+    '  gl_Position = vec4(position.xy, 0.0, 1.0);', // PlaneGeometry(2,2) corners already sit at clip-space extents,
+    '}'                                             // so this skips the camera entirely -- a true fullscreen pass
+  ].join('\n');
+
+  var brightPassMat = new THREE.ShaderMaterial({
+    uniforms: { tDiffuse: { value: null }, threshold: { value: 0.6 } },
+    vertexShader: FS_VERT,
+    fragmentShader: [
+      'uniform sampler2D tDiffuse;',
+      'uniform float threshold;',
+      'varying vec2 vUv;',
+      'void main(){',
+      '  vec4 texel = texture2D(tDiffuse, vUv);',
+      '  float luma = dot(texel.rgb, vec3(0.2126, 0.7152, 0.0722));',
+      '  float w = smoothstep(threshold, threshold + 0.2, luma);',
+      '  gl_FragColor = vec4(texel.rgb * w, 1.0);',
+      '  #include <tonemapping_fragment>',
+      '  #include <colorspace_fragment>',
+      '}'
+    ].join('\n'),
+    toneMapped: false, depthTest: false, depthWrite: false
+  });
+
+  var blurMat = new THREE.ShaderMaterial({
+    uniforms: { tDiffuse: { value: null }, direction: { value: new THREE.Vector2(1, 0) }, texel: { value: new THREE.Vector2(1 / BLOOM_W, 1 / BLOOM_H) } },
+    vertexShader: FS_VERT,
+    fragmentShader: [
+      'uniform sampler2D tDiffuse;',
+      'uniform vec2 direction;',
+      'uniform vec2 texel;',
+      'varying vec2 vUv;',
+      'void main(){',
+      '  vec2 off = direction * texel;',
+      '  float w0 = 0.227027, w1 = 0.1945946, w2 = 0.1216216, w3 = 0.054054, w4 = 0.016216;',
+      '  vec3 sum = texture2D(tDiffuse, vUv).rgb * w0;',
+      '  sum += (texture2D(tDiffuse, vUv + off*1.0).rgb + texture2D(tDiffuse, vUv - off*1.0).rgb) * w1;',
+      '  sum += (texture2D(tDiffuse, vUv + off*2.0).rgb + texture2D(tDiffuse, vUv - off*2.0).rgb) * w2;',
+      '  sum += (texture2D(tDiffuse, vUv + off*3.0).rgb + texture2D(tDiffuse, vUv - off*3.0).rgb) * w3;',
+      '  sum += (texture2D(tDiffuse, vUv + off*4.0).rgb + texture2D(tDiffuse, vUv - off*4.0).rgb) * w4;',
+      '  gl_FragColor = vec4(sum, 1.0);',
+      '  #include <tonemapping_fragment>',
+      '  #include <colorspace_fragment>',
+      '}'
+    ].join('\n'),
+    toneMapped: false, depthTest: false, depthWrite: false
+  });
+
+  var compositeMat = new THREE.ShaderMaterial({
+    uniforms: {
+      tScene: { value: null }, tBloom: { value: null },
+      bloomStrength: { value: 0.85 }, grainStrength: { value: 0.025 }, time: { value: 0 }
+    },
+    vertexShader: FS_VERT,
+    fragmentShader: [
+      'uniform sampler2D tScene;',
+      'uniform sampler2D tBloom;',
+      'uniform float bloomStrength;',
+      'uniform float grainStrength;',
+      'uniform float time;',
+      'varying vec2 vUv;',
+      'float rand(vec2 co){ return fract(sin(dot(co, vec2(12.9898,78.233))) * 43758.5453); }',
+      'void main(){',
+      '  vec3 base = texture2D(tScene, vUv).rgb;',
+      '  vec3 bloom = texture2D(tBloom, vUv).rgb;',
+      '  vec3 color = base + bloom * bloomStrength;',
+      '  color += (rand(vUv + fract(time)) - 0.5) * grainStrength;', // subtle filmic grain, breaks up flat dark areas
+      '  gl_FragColor = vec4(color, 1.0);',
+      // toneMapped:false below skips re-tonemapping (the scene render already
+      // baked that in per-object); colorspace encoding still runs since this
+      // pass lands on the actual canvas.
+      '  #include <tonemapping_fragment>',
+      '  #include <colorspace_fragment>',
+      '}'
+    ].join('\n'),
+    toneMapped: false, depthTest: false, depthWrite: false
+  });
+
+  var postScene = new THREE.Scene();
+  var postCam = new THREE.Camera(); // unused by FS_VERT, kept only because render() requires *a* camera argument
+  var postQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), brightPassMat);
+  postScene.add(postQuad);
+  function renderFullscreen(material, target){
+    postQuad.material = material;
+    renderer.setRenderTarget(target);
+    renderer.render(postScene, postCam);
+  }
+
+  window.addEventListener('resize', function(){
+    var pr = currentPixelRatio();
+    sceneRT.setSize(window.innerWidth * pr, window.innerHeight * pr);
+  });
+
+  function renderWithBloom(){
+    // Everything the game actually draws still goes through one normal
+    // render() call -- shadows, environment map, fog, all unchanged --
+    // just aimed at an offscreen target instead of the canvas directly.
+    renderer.setRenderTarget(sceneRT);
+    renderer.render(scene, camera);
+
+    brightPassMat.uniforms.tDiffuse.value = sceneRT.texture;
+    renderFullscreen(brightPassMat, bloomRTA);
+
+    blurMat.uniforms.tDiffuse.value = bloomRTA.texture;
+    blurMat.uniforms.direction.value.set(1, 0);
+    renderFullscreen(blurMat, bloomRTB);
+
+    blurMat.uniforms.tDiffuse.value = bloomRTB.texture;
+    blurMat.uniforms.direction.value.set(0, 1);
+    renderFullscreen(blurMat, bloomRTA);
+
+    compositeMat.uniforms.tScene.value = sceneRT.texture;
+    compositeMat.uniforms.tBloom.value = bloomRTA.texture;
+    compositeMat.uniforms.time.value = clock.elapsedTime;
+    renderFullscreen(compositeMat, null); // null target = the actual canvas
+  }
+
   function animate(){
     requestAnimationFrame(animate);
     var dt = Math.min(clock.getDelta(), 0.05);
     if (running) update(dt);
-    renderer.render(scene, camera);
+    renderWithBloom();
   }
   animate();
 
