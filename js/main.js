@@ -492,6 +492,7 @@
     return g;
   }
   function buildPine(){
+    if (treeModelProto) return buildTreeModel();
     var g = new THREE.Group();
     var mat = pick(pineFoliageMats);
     var trunk = new THREE.Mesh(pineTrunkGeo, pineTrunkMat);
@@ -528,6 +529,57 @@
       if (obj.isMesh){ obj.castShadow = true; obj.receiveShadow = true; }
     });
     return prop;
+  }
+
+  /* ============================================================
+     REAL TREE / GRASS MODELS  (optional, same "never a hard
+     dependency" pattern as the car model. buildPine() below just
+     checks treeModelProto each time it's called -- chunks already
+     built before the model loads keep their procedural pine, chunks
+     built afterward automatically get the real one. Grass has no
+     procedural fallback at all -- it's pure decoration, so a chunk
+     just goes without it until the model is ready.)
+  ============================================================ */
+  var treeModelProto = null, treeModelRadius = 0.55;
+  var grassModelProto = null;
+  if (window.THREE && THREE.GLTFLoader){
+    new THREE.GLTFLoader().load(window.TREE_MODEL_DATA_URI || 'assets/models/tree.glb', function(gltf){
+      var model = gltf.scene;
+      model.traverse(function(o){ if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
+      var box = new THREE.Box3().setFromObject(model);
+      var scale = 2.3 / Math.max(box.getSize(new THREE.Vector3()).y, 0.0001); // ~matches the procedural pine's own height
+      model.scale.setScalar(scale);
+      model.updateMatrixWorld(true);
+      box.setFromObject(model);
+      var center = box.getCenter(new THREE.Vector3());
+      model.position.x -= center.x;
+      model.position.z -= center.z;
+      model.position.y -= box.min.y;
+      var finalSize = box.getSize(new THREE.Vector3());
+      treeModelRadius = Math.max(finalSize.x, finalSize.z) * 0.3; // canopy silhouette is narrower than the full bbox diagonal
+      treeModelProto = model;
+    }, undefined, function(err){
+      console.warn('Tree model failed to load -- using the procedural pine instead.', err);
+    });
+
+    new THREE.GLTFLoader().load(window.GRASS_MODEL_DATA_URI || 'assets/models/grass.glb', function(gltf){
+      var model = gltf.scene;
+      model.traverse(function(o){ if (o.isMesh){ o.receiveShadow = true; } });
+      model.updateMatrixWorld(true);
+      var box = new THREE.Box3().setFromObject(model);
+      model.position.y -= box.min.y; // sit flush on the ground like everything else here
+      grassModelProto = model;
+    }, undefined, function(err){
+      console.warn('Grass model failed to load -- skipping the extra ground clutter.', err);
+    });
+  }
+  function buildTreeModel(){
+    var g = treeModelProto.clone();
+    g.userData.collideRadius = treeModelRadius;
+    return g;
+  }
+  function buildGrassClump(){
+    return grassModelProto.clone();
   }
 
   /* ============================================================
@@ -819,6 +871,7 @@
   ============================================================ */
   var SCENERY_NEAR_PER_CHUNK = 16;
   var SCENERY_FAR_PER_CHUNK = 11;
+  var GRASS_PER_CHUNK = 14; // cheap ground clutter close to the shoulder; skipped entirely until grassModelProto loads
   var NITRO_PICKUP_CHANCE = 0.7;   // per chunk -- not guaranteed, so it stays a bonus you look out for
   var RAMP_CHANCE = 0.15;          // per chunk -- rare, so a ramp stays a surprise instead of every-chunk furniture
   var RAMP_LENGTH = 10;
@@ -895,6 +948,24 @@
         radius: propF.userData.collideRadius,
         hitCooldown: 0
       });
+    }
+
+    // Ground clutter: small grass clumps close along the shoulder, purely
+    // decorative (no collider, no offroad relevance) -- just skipped until
+    // the real model has loaded, nothing procedural to fall back to.
+    if (grassModelProto){
+      for (var sg=0; sg<GRASS_PER_CHUNK; sg++){
+        var sGrass = startS + rng()*(endS-startS);
+        var fG = frameAtSamples(samples, sGrass);
+        var pxG = Math.cos(fG.heading), pzG = Math.sin(fG.heading);
+        var sideG = rng() < 0.5 ? -1 : 1;
+        var latG = sideG * (4.2 + rng()*5.5);
+        var grass = buildGrassClump();
+        grass.position.set(fG.x + pxG*latG, fG.y, fG.z + pzG*latG);
+        grass.rotation.y = rng()*Math.PI*2;
+        grass.scale.multiplyScalar(0.7 + rng()*0.8);
+        group.add(grass);
+      }
     }
 
     // Nitro pickup: sits on the pavement itself (within reach of normal

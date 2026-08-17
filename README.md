@@ -23,7 +23,9 @@ card-drive/
 │   └── GLTFLoader.js       three.js's model loader, adapted from examples/jsm into a plain script
 ├── assets/
 │   └── models/
-│       └── hyper-gt.glb    the car model (falls back to a built-in placeholder if missing)
+│       ├── hyper-gt.glb    the car model (falls back to a built-in placeholder if missing)
+│       ├── tree.glb        real tree, swapped in over the procedural pine once loaded
+│       └── grass.glb       ground-clutter grass clumps (no procedural equivalent)
 ├── server/
 │   └── server.js            multiplayer server: serves the files + relays race state
 ├── build.py                 regenerates ../card-drive.html (the single-file build)
@@ -159,6 +161,14 @@ time; once every racer has finished (or a straggler timeout passes), a full
   touched, the loader body is stock. If the model or loader fails to load
   for any reason, the primitive car is simply left in place — it's never a
   hard dependency for the game to run.
+- **Trees and grass are real models too, same pattern.** `assets/models/tree.glb`
+  and `grass.glb` load the same way as the car. `buildPine()` just checks
+  whether the tree model has loaded each time it's called — chunks already
+  built keep their procedural pine cones, chunks built after it's ready
+  automatically get the real tree. Grass has no procedural equivalent at
+  all; it's pure ground clutter scattered close to the shoulder
+  (`GRASS_PER_CHUNK` in `js/main.js`), and a chunk simply goes without it
+  until the model loads.
 
 ## Also available as a single file
 

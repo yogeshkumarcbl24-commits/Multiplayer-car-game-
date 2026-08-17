@@ -2,9 +2,10 @@
 """
 Bundles the project (index.html + css/style.css + js/net.js + js/main.js +
 lib/three.min.js + lib/GLTFLoader.js) into a single self-contained
-../card-drive.html file. The car model (assets/models/hyper-gt.glb) gets
-base64-embedded as a data: URI too, since the single file has no adjacent
-assets/ folder to fetch it from -- see CAR_MODEL_DATA_URI in js/main.js.
+../card-drive.html file. The car/tree/grass models (assets/models/*.glb)
+get base64-embedded as data: URIs too, since the single file has no
+adjacent assets/ folder to fetch them from -- see *_MODEL_DATA_URI in
+js/main.js.
 
 Note: multiplayer needs a real WebSocket server, so this single-file build
 only ever plays solo (js/net.js fails to connect and falls back gracefully).
@@ -26,9 +27,16 @@ main_js = (HERE / "js" / "main.js").read_text(encoding="utf-8")
 three = (HERE / "lib" / "three.min.js").read_text(encoding="utf-8")
 gltf_loader = (HERE / "lib" / "GLTFLoader.js").read_text(encoding="utf-8")
 
-car_model_path = HERE / "assets" / "models" / "hyper-gt.glb"
-car_model_b64 = base64.b64encode(car_model_path.read_bytes()).decode("ascii")
-car_model_data_uri = f"data:model/gltf-binary;base64,{car_model_b64}"
+MODELS = {
+    "CAR_MODEL_DATA_URI": "hyper-gt.glb",
+    "TREE_MODEL_DATA_URI": "tree.glb",
+    "GRASS_MODEL_DATA_URI": "grass.glb",
+}
+model_globals = ""
+for global_name, filename in MODELS.items():
+    data = (HERE / "assets" / "models" / filename).read_bytes()
+    b64 = base64.b64encode(data).decode("ascii")
+    model_globals += f'<script>window.{global_name} = "data:model/gltf-binary;base64,{b64}";</script>\n'
 
 html = html.replace(
     '<link rel="stylesheet" href="css/style.css">',
@@ -40,8 +48,7 @@ html = html.replace(
 )
 html = html.replace(
     '<script src="lib/GLTFLoader.js"></script>',
-    f"<script>{gltf_loader}</script>\n"
-    f'<script>window.CAR_MODEL_DATA_URI = "{car_model_data_uri}";</script>',
+    f"<script>{gltf_loader}</script>\n{model_globals}",
 )
 html = html.replace(
     '<script src="js/net.js"></script>\n<script src="js/main.js"></script>',
