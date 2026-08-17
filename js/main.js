@@ -440,54 +440,85 @@
 
   /* ============================================================
      SCENERY PROP PROTOTYPES  (cactus/mesa for desert, pine/mountain for hills)
+     A few shade variants per type (picked at random per-prop) so a dense
+     treeline doesn't read as one mesh copy-pasted everywhere.
   ============================================================ */
-  var cactusMat = new THREE.MeshStandardMaterial({ color: 0x2f8f5b, roughness: 0.8 });
-  var pineFoliageMat = new THREE.MeshStandardMaterial({ color: 0x1f6b3a, roughness: 0.9 });
+  var cactusMats = [0x2f8f5b, 0x2a7d4f, 0x37a06a].map(function(c){
+    return new THREE.MeshStandardMaterial({ color: c, roughness: 0.8 });
+  });
+  var pineFoliageMats = [0x1f6b3a, 0x276e34, 0x1a5c40].map(function(c){
+    return new THREE.MeshStandardMaterial({ color: c, roughness: 0.9 });
+  });
   var pineTrunkMat = new THREE.MeshStandardMaterial({ color: 0x4a3320, roughness: 1 });
-  var mesaMat = new THREE.MeshStandardMaterial({ color: 0xaa5a34, roughness: 1 });
-  var mountainMat = new THREE.MeshStandardMaterial({ color: 0x5a5f8f, roughness: 1 });
+  var mesaMats = [0xaa5a34, 0xb9663a, 0x9c5230].map(function(c){
+    return new THREE.MeshStandardMaterial({ color: c, roughness: 1 });
+  });
+  var mountainMats = [0x5a5f8f, 0x656a9c, 0x4f5480].map(function(c){
+    return new THREE.MeshStandardMaterial({ color: c, roughness: 1 });
+  });
+  var cactusFlowerMat = new THREE.MeshStandardMaterial({ color: 0xff7fb0, roughness: 0.6, emissive: new THREE.Color(0x7a0f3c), emissiveIntensity: 0.3 });
 
   var cactusTrunkGeo = new THREE.CylinderGeometry(0.16, 0.2, 1.6, 7);
   var cactusArmGeo = new THREE.CylinderGeometry(0.09, 0.12, 0.6, 6);
-  var pineTrunkGeo = new THREE.CylinderGeometry(0.09, 0.12, 0.5, 6);
-  var pineFoliageGeo = new THREE.ConeGeometry(0.6, 1.5, 8);
+  var cactusFlowerGeo = new THREE.SphereGeometry(0.11, 6, 6);
+  var pineTrunkGeo = new THREE.CylinderGeometry(0.09, 0.12, 0.6, 6);
+  var pineFoliageGeo = new THREE.ConeGeometry(0.5, 1.1, 8);      // top tier -- narrow crown
+  var pineFoliageLowerGeo = new THREE.ConeGeometry(0.78, 1.15, 8); // bottom tier -- wide skirt, for a fuller fir silhouette
   var mesaGeo = new THREE.BoxGeometry(1, 1, 1);
   var mountainGeo = new THREE.ConeGeometry(1, 1, 5);
 
+  function pick(arr){ return arr[Math.floor(rng()*arr.length)]; }
+
   function buildCactus(){
     var g = new THREE.Group();
-    var trunk = new THREE.Mesh(cactusTrunkGeo, cactusMat);
+    var mat = pick(cactusMats);
+    var trunk = new THREE.Mesh(cactusTrunkGeo, mat);
     trunk.position.y = 0.8;
     g.add(trunk);
     [-1,1].forEach(function(side){
-      var arm = new THREE.Mesh(cactusArmGeo, cactusMat);
+      var arm = new THREE.Mesh(cactusArmGeo, mat);
       arm.position.set(side*0.22, 0.95, 0);
       arm.rotation.z = side * 0.9;
       g.add(arm);
     });
+    // roughly a third of cacti get a little bloom on top -- a small splash
+    // of color against all the green/sand so the desert doesn't feel flat
+    if (rng() < 0.35){
+      var flower = new THREE.Mesh(cactusFlowerGeo, cactusFlowerMat);
+      flower.position.y = 1.65;
+      g.add(flower);
+    }
+    g.userData.collideRadius = 0.4;
     return g;
   }
   function buildPine(){
     var g = new THREE.Group();
+    var mat = pick(pineFoliageMats);
     var trunk = new THREE.Mesh(pineTrunkGeo, pineTrunkMat);
-    trunk.position.y = 0.25;
+    trunk.position.y = 0.3;
     g.add(trunk);
-    var foliage = new THREE.Mesh(pineFoliageGeo, pineFoliageMat);
-    foliage.position.y = 1.1;
+    var foliageLower = new THREE.Mesh(pineFoliageLowerGeo, mat);
+    foliageLower.position.y = 0.95;
+    g.add(foliageLower);
+    var foliage = new THREE.Mesh(pineFoliageGeo, mat);
+    foliage.position.y = 1.65;
     g.add(foliage);
+    g.userData.collideRadius = 0.55;
     return g;
   }
   function buildMesa(){
-    var m = new THREE.Mesh(mesaGeo, mesaMat);
+    var m = new THREE.Mesh(mesaGeo, pick(mesaMats));
     m.scale.set(3+rng()*4, 3+rng()*5, 3+rng()*4);
     m.position.y = m.scale.y/2;
+    m.userData.collideRadius = m.scale.x * 0.5;
     return m;
   }
   function buildMountain(){
-    var m = new THREE.Mesh(mountainGeo, mountainMat);
+    var m = new THREE.Mesh(mountainGeo, pick(mountainMats));
     m.scale.set(6+rng()*5, 7+rng()*7, 6+rng()*5);
     m.position.y = m.scale.y/2;
     m.rotation.y = rng()*Math.PI;
+    m.userData.collideRadius = m.scale.x;
     return m;
   }
 
@@ -698,8 +729,8 @@
      there is no per-object recycle math, the curving road makes
      that impractical. This is what makes the drive "never-ending".
   ============================================================ */
-  var SCENERY_NEAR_PER_CHUNK = 10;
-  var SCENERY_FAR_PER_CHUNK = 7;
+  var SCENERY_NEAR_PER_CHUNK = 16;
+  var SCENERY_FAR_PER_CHUNK = 11;
 
   function buildChunk(targetEndS){
     var samples = [lastSample].concat(advancePathTo(targetEndS));
@@ -708,6 +739,7 @@
 
     var group = new THREE.Group();
     var ownGeometries = [];
+    var colliders = []; // scenery you can actually run into off-road: {x, z, radius, hitCooldown}
 
     var roadGeo = buildRibbon(samples, ROAD_WIDTH/2, { uvTile: 24, bank: true });
     var roadMesh = new THREE.Mesh(roadGeo, roadMat);
@@ -743,6 +775,11 @@
       propN.rotation.y = rng()*Math.PI*2;
       propN.scale.multiplyScalar(0.8 + rng()*0.6);
       group.add(propN);
+      colliders.push({
+        x: propN.position.x, z: propN.position.z,
+        radius: propN.userData.collideRadius * propN.scale.x,
+        hitCooldown: 0
+      });
     }
     for (var sf=0; sf<SCENERY_FAR_PER_CHUNK; sf++){
       var sFar = startS + rng()*(endS-startS);
@@ -755,10 +792,18 @@
       propF.position.z = fF.z + pzF*latF;
       propF.position.y += fF.y;
       group.add(propF);
+      // far mesas/mountains sit well off the shoulder, but a wild swerve at
+      // MAX_OFFROAD can still reach the closer ones -- they should stop you
+      // like the solid rock they are, not let you drive straight through
+      colliders.push({
+        x: propF.position.x, z: propF.position.z,
+        radius: propF.userData.collideRadius,
+        hitCooldown: 0
+      });
     }
 
     scene.add(group);
-    return { startS: startS, endS: endS, samples: samples, group: group, ownGeometries: ownGeometries };
+    return { startS: startS, endS: endS, samples: samples, group: group, ownGeometries: ownGeometries, colliders: colliders };
   }
 
   function disposeChunk(chunk){
@@ -1524,6 +1569,54 @@
     projectiles.push({ mesh: mesh, vel: dir.multiplyScalar(PROJECTILE_SPEED + Math.max(0, speed)), life: PROJECTILE_LIFE });
   }
 
+  /* ============================================================
+     SCENERY COLLISION  (running off-road into a tree/cactus/mesa/
+     mountain is a real hit, not a pass-through -- it shoves the car
+     back onto the road, kills your speed, and costs health, same
+     physical language as a car-to-car ram)
+  ============================================================ */
+  var CAR_COLLIDE_RADIUS = 0.9;
+  var TREE_DAMAGE = 18;
+  var TREE_KNOCK_STRENGTH = 6;
+  var SCENERY_HIT_COOLDOWN = 0.7; // re-arm delay per prop so grinding along one trunk doesn't spam hits every frame
+
+  function checkSceneryCollisions(dt, carX, carZ, lateralX, lateralZ){
+    for (var ci=0; ci<chunks.length; ci++){
+      var colliders = chunks[ci].colliders;
+      for (var pi=0; pi<colliders.length; pi++){
+        var c = colliders[pi];
+        if (c.hitCooldown > 0){ c.hitCooldown -= dt; continue; }
+        var dx = carX - c.x, dz = carZ - c.z;
+        var minDist = CAR_COLLIDE_RADIUS + c.radius;
+        var distSq = dx*dx + dz*dz;
+        if (distSq >= minDist*minDist) continue;
+
+        var dist = Math.sqrt(Math.max(distSq, 0.0001));
+        var overlap = minDist - dist;
+        // push direction expressed along the road's lateral axis (the same
+        // axis laneOffset already lives on), not raw world space, so the
+        // shove reads as "bounced sideways off the road" rather than a
+        // random nudge
+        var lateralPush = (dx/dist)*lateralX + (dz/dist)*lateralZ;
+        var knockDir = lateralPush >= 0 ? 1 : -1;
+
+        laneOffset += knockDir * overlap;
+        laneOffset = Math.max(-MAX_OFFROAD, Math.min(MAX_OFFROAD, laneOffset));
+        var strength = Math.min(0.75, 0.25 + Math.abs(speed)/MAX_SPEED*0.5);
+        speed *= (1 - strength);
+        lateralVelocity += knockDir * TREE_KNOCK_STRENGTH;
+        shakeTime = Math.max(shakeTime, 0.3);
+        carKick = 1;
+        impactFlashEl.classList.remove('hit');
+        void impactFlashEl.offsetWidth;
+        impactFlashEl.classList.add('hit');
+        applyDamage(TREE_DAMAGE);
+
+        c.hitCooldown = SCENERY_HIT_COOLDOWN;
+      }
+    }
+  }
+
   function updateCombat(dt){
     fireCooldownT = Math.max(0, fireCooldownT - dt);
     if (input.fire && fireCooldownT <= 0 && !localFinished && !exploded && running){
@@ -1641,6 +1734,11 @@
     if (!frozen && Math.abs(laneOffset) > maxLane) applyDamage(OFFROAD_DAMAGE_PER_SEC * dt);
 
     var px = Math.cos(frame.heading), pz = Math.sin(frame.heading);
+
+    // Off-road, laneOffset can genuinely put you inside a tree/cactus/mesa --
+    // check before the final position is committed so a collision this frame
+    // shoves laneOffset back out before the car is drawn overlapping it.
+    if (!frozen) checkSceneryCollisions(dt, frame.x + px*laneOffset, frame.z + pz*laneOffset, px, pz);
 
     var t = clock.elapsedTime;
     var bob = reduceMotion ? 0 : Math.sin(t*8) * 0.02 * Math.min(1.3, Math.abs(speed)/18);

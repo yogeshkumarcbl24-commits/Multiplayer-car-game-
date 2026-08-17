@@ -105,6 +105,14 @@ time; once every racer has finished (or a straggler timeout passes), a full
   elapsed real time (`DAY_LENGTH` = 110s per full cycle) and cross-fades sky,
   fog, and light color between them, layered on top of the existing
   desert/hills blend.
+- **Scenery is solid, not decorative.** Every prop each chunk places gets a
+  matching entry in that chunk's `colliders` list (`buildChunk` in
+  `js/main.js`). `checkSceneryCollisions` runs each frame and, if the car's
+  position overlaps one, shoves `laneOffset` back out along the road's
+  lateral axis, kills speed, applies knockback/damage, and starts a
+  per-prop cooldown — driving off-road into a tree/cactus/mesa/mountain is a
+  real hit, the same physical language as ramming another car, not a
+  pass-through.
 - **Hills ↔ desert**: a smooth sine-wave blend (`biomeBlendAt` in
   `js/main.js`) picks which terrain props (pine trees/mountains vs.
   cacti/mesas) get built into each chunk and tints the terrain ribbon's
