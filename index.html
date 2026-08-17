@@ -44,6 +44,11 @@
     <div class="health-track"><div class="health-fill" id="health-fill"></div></div>
   </div>
 
+  <div class="nitro-wrap" id="nitro-wrap">
+    <div class="nitro-label">NOS</div>
+    <div class="nitro-track"><div class="nitro-fill" id="nitro-fill"></div></div>
+  </div>
+
   <div class="leaderboard" id="leaderboard" hidden>
     <div class="leaderboard-title">Race Standings</div>
     <div class="leaderboard-rows" id="leaderboard-rows"></div>
@@ -61,6 +66,8 @@
     <span>&middot;</span>
     <span><kbd>Space</kbd> fire</span>
     <span>&middot;</span>
+    <span><kbd>X</kbd> nitro</span>
+    <span>&middot;</span>
     <span>ram opponents to bump them</span>
   </div>
 
@@ -77,6 +84,7 @@
   </div>
   <div class="touch-actions">
     <button type="button" class="touch-btn touch-fire" id="tb-fire" aria-label="Fire">&#9679;</button>
+    <button type="button" class="touch-btn touch-nitro" id="tb-nitro" aria-label="Nitro">N</button>
     <div class="touch-pedals">
       <button type="button" class="touch-btn touch-gas" id="tb-gas" aria-label="Gas">&uarr;</button>
       <button type="button" class="touch-btn touch-brake" id="tb-brake" aria-label="Brake">&darr;</button>
@@ -108,7 +116,12 @@
 
     <div class="tutorial-section">
       <div class="tutorial-section-title">Fight</div>
-      <p>Ram other cars to bump them off their line, or hold <kbd>Space</kbd> to fire your mounted gun. Watch your HP bar &mdash; run out and your car explodes, then respawns a moment later.</p>
+      <p>Ram other cars to bump them off their line, or hold <kbd>Space</kbd> to fire your mounted gun. Watch your HP bar &mdash; run out and your car explodes, then respawns back on the road a moment later.</p>
+    </div>
+
+    <div class="tutorial-section">
+      <div class="tutorial-section-title">Nitro &amp; ramps</div>
+      <p>Drive through the glowing cyan orbs on the road to fill your NOS tank &mdash; it only fills from pickups, so grab them when you see them. Hold <kbd>X</kbd> to burn it for a big speed boost. Hit a ramp fast enough and you'll catch real air, nose tilting with the jump until you land.</p>
     </div>
 
     <div class="tutorial-section">

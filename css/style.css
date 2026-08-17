@@ -159,6 +159,54 @@ canvas{
   transition:width .25s ease, background .25s ease;
 }
 
+.nitro-wrap{
+  position:absolute;
+  top:118px; right:26px;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  background:var(--panel);
+  border:1px solid var(--hairline);
+  border-radius:10px;
+  padding:8px 13px;
+  backdrop-filter:blur(6px);
+  transition:box-shadow .3s ease;
+}
+.nitro-wrap.collected{
+  animation:nitroCollectPulse 0.5s ease-out;
+}
+@keyframes nitroCollectPulse{
+  0%{ box-shadow:0 0 0 0 rgba(47,230,255,0.7); }
+  100%{ box-shadow:0 0 22px 6px rgba(47,230,255,0); }
+}
+.nitro-label{
+  font-size:9.5px;
+  letter-spacing:0.16em;
+  text-transform:uppercase;
+  color:var(--fog-dim);
+  flex:none;
+}
+.nitro-track{
+  width:120px; height:8px;
+  border-radius:999px;
+  background:#161a3a;
+  overflow:hidden;
+}
+.nitro-fill{
+  height:100%;
+  width:0%;
+  background:linear-gradient(90deg, var(--cyan), var(--violet));
+  border-radius:999px;
+  transition:width .2s ease;
+}
+.nitro-fill.active{
+  animation:nitroBurn 0.4s linear infinite;
+}
+@keyframes nitroBurn{
+  0%, 100%{ filter:brightness(1); }
+  50%{ filter:brightness(1.5); }
+}
+
 .controls-hint{
   position:absolute;
   bottom:20px; left:50%;
@@ -216,7 +264,7 @@ canvas{
 /* ---------- Leaderboard ---------- */
 .leaderboard{
   position:absolute;
-  top:128px; right:26px;
+  top:172px; right:26px;
   min-width:190px;
   max-width:230px;
   background:var(--panel);
@@ -357,6 +405,17 @@ canvas{
 .touch-brake:active, .touch-brake.pressed{
   background:rgba(255,201,77,0.22);
   border-color:var(--gold);
+}
+.touch-nitro{
+  width:52px; height:52px;
+  font-size:16px;
+  font-weight:800;
+  color:var(--cyan);
+  border-color:var(--cyan);
+}
+.touch-nitro:active, .touch-nitro.pressed{
+  background:rgba(47,230,255,0.28);
+  border-color:var(--cyan);
 }
 body.touch-active .controls-hint{ display:none; }
 body.touch-active .biome-tag{ bottom:calc(100px + env(safe-area-inset-bottom, 0px)); }
@@ -784,7 +843,9 @@ h1 em{
   .biome-tag{ font-size:9px; padding:6px 12px; }
   .health-wrap{ top:66px; padding:6px 10px; }
   .health-track{ width:80px; }
-  .leaderboard{ top:112px; }
+  .nitro-wrap{ top:104px; padding:6px 10px; }
+  .nitro-track{ width:80px; }
+  .leaderboard{ top:146px; }
 }
 @media (max-width: 460px){
   .leaderboard{ display:none; }

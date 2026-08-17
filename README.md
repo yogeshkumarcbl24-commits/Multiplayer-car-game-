@@ -71,8 +71,10 @@ is a separate step not yet set up in this project.
 - **← / →** or drag: steer
 - **↑**: boost
 - **↓**: brake
+- **X**: burn nitro (only fills by driving through the cyan pickups on the road)
 
-First to the finish line wins. Crossing it stops your car and shows your
+Drive fast enough over a ramp and you'll launch into the air, nose tilting
+with the jump until you land. First to the finish line wins. Crossing it stops your car and shows your
 time; once every racer has finished (or a straggler timeout passes), a full
 **Race Results** screen appears with everyone ranked by finish time, and a
 **Race Again** button.
@@ -117,6 +119,18 @@ time; once every racer has finished (or a straggler timeout passes), a full
   `js/main.js`) picks which terrain props (pine trees/mountains vs.
   cacti/mesas) get built into each chunk and tints the terrain ribbon's
   vertex colors, so the crossfade has no visible seams.
+- **Nitro only ever fills from pickups.** Each chunk has a chance of placing
+  a glowing orb on the pavement (`buildChunk` in `js/main.js`); driving
+  through one (`checkNitroPickups`) tops up the NOS bar. There's no passive
+  regen — holding `X` (`updateCombat`'s sibling, the nitro block in
+  `update()`) spends the tank for a real accel/top-speed bonus until it's
+  empty, then you have to go find another orb.
+- **Ramps are real ribbon geometry, not a sprite.** A ramp is the exact same
+  `buildRibbon()` used for the road/rails, just eased up to `RAMP_HEIGHT`
+  over its length, so it automatically follows the road's curve. Crossing
+  one fast enough (`checkRamps`) launches the car under actual gravity
+  (`updateAirborne`) — height, arc, and the nose-tilt while airborne all
+  come from real vertical velocity, not a canned animation.
 - `lib/three.min.js` was vendored from `three@0.160.0` on npm. To update it,
   run `npm install three@<version>` somewhere and copy
   `node_modules/three/build/three.min.js` over this file.

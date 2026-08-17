@@ -531,6 +531,42 @@
   }
 
   /* ============================================================
+     NITRO PICKUPS  (spinning orbs on the pavement -- drive through one
+     to fill the NOS tank; it never refills on its own)
+  ============================================================ */
+  var nitroPickupGeo = new THREE.IcosahedronGeometry(0.42, 0);
+  var nitroPickupMat = new THREE.MeshStandardMaterial({
+    color: 0x2fe6ff, emissive: new THREE.Color(0x2fe6ff), emissiveIntensity: 1.6,
+    roughness: 0.25, metalness: 0.5
+  });
+  var nitroPickupGlowMat = new THREE.SpriteMaterial({
+    map: glowTex, color: 0x2fe6ff, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
+  });
+  function buildNitroPickup(){
+    var g = new THREE.Group();
+    var core = new THREE.Mesh(nitroPickupGeo, nitroPickupMat);
+    core.castShadow = true;
+    g.add(core);
+    // shared glow sprite material (not cloned) -- nothing here varies per
+    // instance, so there's nothing to dispose per-chunk either
+    var glow = new THREE.Sprite(nitroPickupGlowMat);
+    glow.scale.set(1.7, 1.7, 1);
+    g.add(glow);
+    return g;
+  }
+
+  /* ============================================================
+     RAMPS  (a raised ribbon segment, same buildRibbon() geometry as
+     the road/rails, so it automatically follows the road's curve and
+     bank instead of needing its own trig -- fast enough to launch off
+     of catches real air)
+  ============================================================ */
+  var rampMat = new THREE.MeshStandardMaterial({
+    color: 0xffc94d, roughness: 0.55, metalness: 0.2,
+    emissive: new THREE.Color(0x3a2200), emissiveIntensity: 0.35
+  });
+
+  /* ============================================================
      THE CAR  (built from primitives, chased by the camera)
   ============================================================ */
   var car = new THREE.Group();
@@ -731,6 +767,11 @@
   ============================================================ */
   var SCENERY_NEAR_PER_CHUNK = 16;
   var SCENERY_FAR_PER_CHUNK = 11;
+  var NITRO_PICKUP_CHANCE = 0.7;   // per chunk -- not guaranteed, so it stays a bonus you look out for
+  var RAMP_CHANCE = 0.4;           // per chunk -- frequent enough to matter, rare enough to stay a moment, not the norm
+  var RAMP_LENGTH = 10;
+  var RAMP_HEIGHT = 2.6;
+  var RAMP_WIDTH = 4.2;
 
   function buildChunk(targetEndS){
     var samples = [lastSample].concat(advancePathTo(targetEndS));
@@ -740,6 +781,8 @@
     var group = new THREE.Group();
     var ownGeometries = [];
     var colliders = []; // scenery you can actually run into off-road: {x, z, radius, hitCooldown}
+    var pickups = [];   // nitro orbs on the pavement: {x, y, z, mesh, collected}
+    var ramps = [];     // launch zones: {sStart, sEnd, lateralCenter, halfWidth, hitCooldown}
 
     var roadGeo = buildRibbon(samples, ROAD_WIDTH/2, { uvTile: 24, bank: true });
     var roadMesh = new THREE.Mesh(roadGeo, roadMat);
@@ -802,8 +845,53 @@
       });
     }
 
+    // Nitro pickup: sits on the pavement itself (within reach of normal
+    // driving, not off in the dirt with the scenery) so grabbing one is
+    // about weaving your line, not detouring off-road.
+    if (rng() < NITRO_PICKUP_CHANCE && endS - startS > 20){
+      var sPick = startS + 8 + rng()*(endS - startS - 16);
+      var fP = frameAtSamples(samples, sPick);
+      var pxP = Math.cos(fP.heading), pzP = Math.sin(fP.heading);
+      var lanePick = (rng()*2-1) * maxLane * 0.7;
+      var pickupMesh = buildNitroPickup();
+      var pickupX = fP.x + pxP*lanePick, pickupY = fP.y + 0.55, pickupZ = fP.z + pzP*lanePick;
+      pickupMesh.position.set(pickupX, pickupY, pickupZ);
+      group.add(pickupMesh);
+      pickups.push({ x: pickupX, y: pickupY, z: pickupZ, mesh: pickupMesh, collected: false });
+    }
+
+    // Ramp: a short raised strip of the same ribbon geometry as the road,
+    // easing up from pavement height to RAMP_HEIGHT over RAMP_LENGTH --
+    // built from buildRibbon() like everything else here, so it already
+    // follows the road's curve/bank with no separate trig of its own.
+    if (rng() < RAMP_CHANCE && endS - startS > RAMP_LENGTH + 20){
+      var rampStart = startS + 10 + rng()*(endS - startS - RAMP_LENGTH - 20);
+      var rampEnd = rampStart + RAMP_LENGTH;
+      var rampLateral = (rng()*2-1) * (maxLane - RAMP_WIDTH/2 - 0.4);
+      var RAMP_STEPS = 6;
+      var rampSamples = [];
+      for (var rs=0; rs<=RAMP_STEPS; rs++){
+        var prog = rs / RAMP_STEPS;
+        var rf = frameAtSamples(samples, rampStart + (rampEnd-rampStart)*prog);
+        rampSamples.push({
+          s: rf.s, x: rf.x, z: rf.z, heading: rf.heading, bank: 0,
+          y: rf.y + RAMP_HEIGHT * prog * prog // eased ramp-up, steepest right before launch
+        });
+      }
+      var rampGeo = buildRibbon(rampSamples, RAMP_WIDTH/2, { centerOffset: rampLateral, uvTile: 5 });
+      var rampMesh = new THREE.Mesh(rampGeo, rampMat);
+      rampMesh.castShadow = true;
+      rampMesh.receiveShadow = true;
+      group.add(rampMesh);
+      ownGeometries.push(rampGeo);
+      ramps.push({ sStart: rampStart, sEnd: rampEnd, lateralCenter: rampLateral, halfWidth: RAMP_WIDTH/2, hitCooldown: 0 });
+    }
+
     scene.add(group);
-    return { startS: startS, endS: endS, samples: samples, group: group, ownGeometries: ownGeometries, colliders: colliders };
+    return {
+      startS: startS, endS: endS, samples: samples, group: group, ownGeometries: ownGeometries,
+      colliders: colliders, pickups: pickups, ramps: ramps
+    };
   }
 
   function disposeChunk(chunk){
@@ -839,7 +927,7 @@
   /* ============================================================
      INPUT
   ============================================================ */
-  var input = { left:false, right:false, boost:false, brake:false, fire:false };
+  var input = { left:false, right:false, boost:false, brake:false, fire:false, nitro:false };
   var pointerSteer = 0;
   var pointerActive = false;
   var pointerStartX = 0;
@@ -859,6 +947,7 @@
     if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') input.boost = true;
     if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') input.brake = true;
     if (e.key === ' ' || e.key === 'Spacebar') { input.fire = true; e.preventDefault(); }
+    if (e.key === 'x' || e.key === 'X') input.nitro = true;
     hideHint();
   });
   window.addEventListener('keyup', function(e){
@@ -867,6 +956,7 @@
     if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') input.boost = false;
     if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') input.brake = false;
     if (e.key === ' ' || e.key === 'Spacebar') input.fire = false;
+    if (e.key === 'x' || e.key === 'X') input.nitro = false;
   });
 
   // Dragging on open canvas is *steering only*. Gas has its own explicit
@@ -897,7 +987,7 @@
   // alt-tabbing or switching apps), leaving the car turning/accelerating on
   // its own forever. Clear every input the moment that happens.
   function releaseAllInputs(){
-    input.left = false; input.right = false; input.boost = false; input.brake = false; input.fire = false;
+    input.left = false; input.right = false; input.boost = false; input.brake = false; input.fire = false; input.nitro = false;
     releasePointerSteer();
   }
   window.addEventListener('blur', releaseAllInputs);
@@ -953,6 +1043,7 @@
   bindHoldButton('tb-gas',   function(){ input.boost = true; }, function(){ input.boost = false; });
   bindHoldButton('tb-brake', function(){ input.brake = true; }, function(){ input.brake = false; });
   bindHoldButton('tb-fire',  function(){ input.fire = true;  }, function(){ input.fire = false; });
+  bindHoldButton('tb-nitro', function(){ input.nitro = true; }, function(){ input.nitro = false; });
 
   /* ============================================================
      LANE INDICATOR
@@ -1272,6 +1363,8 @@
   function resetRacePhysics(){
     worldDistance = 0; localFinished = false; myFinishTime = null;
     steerSmooth = 0; lateralVelocity = 0; carHeading = 0;
+    carAirY = 0; carVertVel = 0;
+    nitro = 0; updateNitroBar();
     finishToastEl.hidden = true;
     raceResultsEl.hidden = true;
     gate.classList.add('gone');
@@ -1450,6 +1543,101 @@
   }
   updateHealthBar();
 
+  /* ============================================================
+     NITRO  (fills only from pickups on the road -- no passive
+     regen -- then burns while X is held for a real speed boost)
+  ============================================================ */
+  var NITRO_MAX = 100;
+  var NITRO_PICKUP_FILL = 40;      // one orb ~= 40% of the tank
+  var NITRO_DRAIN_PER_SEC = 38;    // a full tank is a bit over 2.5s of boost
+  var NITRO_ACCEL_BONUS = 22;
+  var NITRO_MAX_SPEED_BONUS = 15;
+  var NITRO_PICKUP_RADIUS = 1.6;
+  var nitro = 0;
+  var nitroFillEl = document.getElementById('nitro-fill');
+  var nitroWrapEl = document.getElementById('nitro-wrap');
+
+  function updateNitroBar(){
+    var pct = Math.max(0, Math.min(1, nitro / NITRO_MAX));
+    nitroFillEl.style.width = (pct*100) + '%';
+  }
+  updateNitroBar();
+
+  function checkNitroPickups(carX, carZ){
+    for (var ci=0; ci<chunks.length; ci++){
+      var pickups = chunks[ci].pickups;
+      for (var pi=0; pi<pickups.length; pi++){
+        var pk = pickups[pi];
+        if (pk.collected) continue;
+        var dx = carX - pk.x, dz = carZ - pk.z;
+        if (dx*dx + dz*dz > NITRO_PICKUP_RADIUS*NITRO_PICKUP_RADIUS) continue;
+        pk.collected = true;
+        pk.mesh.visible = false;
+        nitro = Math.min(NITRO_MAX, nitro + NITRO_PICKUP_FILL);
+        updateNitroBar();
+        nitroWrapEl.classList.remove('collected');
+        void nitroWrapEl.offsetWidth;
+        nitroWrapEl.classList.add('collected');
+      }
+    }
+  }
+
+  // Spinning/bobbing idle animation for any pickup still out on the track --
+  // purely cosmetic, runs whether or not the car is even moving.
+  function updatePickups(dt){
+    var t = clock.elapsedTime;
+    for (var ci=0; ci<chunks.length; ci++){
+      var pickups = chunks[ci].pickups;
+      for (var pi=0; pi<pickups.length; pi++){
+        var pk = pickups[pi];
+        if (pk.collected) continue;
+        pk.mesh.rotation.y += dt*2.4;
+        pk.mesh.position.y = pk.y + Math.sin(t*3 + pk.x*0.3) * 0.12;
+      }
+    }
+  }
+
+  // Small fading embers spat out behind the car while nitro is burning --
+  // short-lived and self-disposing, not tied to chunk streaming.
+  var nitroParticles = [];
+  var nitroParticleGeo = new THREE.SphereGeometry(0.11, 6, 6);
+  var nitroEmitT = 0;
+  function spawnNitroParticle(){
+    var mat = new THREE.MeshBasicMaterial({
+      color: 0x8ff2ff, transparent: true, opacity: 0.85,
+      blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    var mesh = new THREE.Mesh(nitroParticleGeo, mat);
+    car.updateMatrixWorld();
+    mesh.position.copy(car.localToWorld(new THREE.Vector3((Math.random()-0.5)*0.8, 0.22 + Math.random()*0.14, 1.9)));
+    scene.add(mesh);
+    nitroParticles.push({ mesh: mesh, life: 0.4, maxLife: 0.4 });
+  }
+  function updateNitroParticles(dt, emitting){
+    if (emitting){
+      nitroEmitT += dt;
+      while (nitroEmitT > 0.028){
+        spawnNitroParticle();
+        nitroEmitT -= 0.028;
+      }
+    } else {
+      nitroEmitT = 0;
+    }
+    for (var i=nitroParticles.length-1; i>=0; i--){
+      var p = nitroParticles[i];
+      p.life -= dt;
+      p.mesh.position.y += dt*1.1;
+      var k = 1 - Math.max(0, p.life/p.maxLife);
+      p.mesh.scale.setScalar(1 + k*1.6);
+      p.mesh.material.opacity = Math.max(0, p.life/p.maxLife) * 0.85;
+      if (p.life <= 0){
+        scene.remove(p.mesh);
+        p.mesh.material.dispose();
+        nitroParticles.splice(i, 1);
+      }
+    }
+  }
+
   var activeExplosions = [];
   var explosionDebrisGeo = new THREE.BoxGeometry(0.14, 0.14, 0.14);
   var explosionDebrisMat = new THREE.MeshBasicMaterial({ color: 0x2a2e4a });
@@ -1523,6 +1711,8 @@
       lateralVelocity = 0;
       steerSmooth = 0;
       carHeading = sampleAt(worldDistance).heading;
+      carAirY = 0;
+      carVertVel = 0;
       car.visible = true;
       exploded = false;
     }, RESPAWN_DELAY*1000);
@@ -1627,6 +1817,47 @@
     }
   }
 
+  /* ============================================================
+     RAMPS & AIRBORNE PHYSICS  (a real stunt jump, not just a visual --
+     the car leaves the road surface, arcs under gravity, and pitches
+     with its vertical speed until it lands)
+  ============================================================ */
+  var carAirY = 0;      // height above the road surface -- 0 means grounded
+  var carVertVel = 0;   // vertical speed, +up
+  var GRAVITY = 24;
+  var RAMP_LAUNCH_BASE = 5;
+  var RAMP_LAUNCH_SPEED_FACTOR = 0.3; // faster off the ramp = higher/longer air, like a real one
+  var RAMP_MIN_SPEED = 5;             // too slow and you just roll up and over it
+  var RAMP_COOLDOWN = 1.5;
+
+  function checkRamps(dt, carS, carLane){
+    if (carAirY > 0.05) return; // already airborne -- can't launch off a ramp mid-jump
+    for (var ci=0; ci<chunks.length; ci++){
+      var ramps = chunks[ci].ramps;
+      for (var ri=0; ri<ramps.length; ri++){
+        var r = ramps[ri];
+        if (r.hitCooldown > 0){ r.hitCooldown -= dt; continue; }
+        if (carS < r.sStart || carS > r.sEnd) continue;
+        if (Math.abs(carLane - r.lateralCenter) > r.halfWidth) continue;
+        if (Math.abs(speed) < RAMP_MIN_SPEED) continue;
+        carVertVel = RAMP_LAUNCH_BASE + Math.abs(speed) * RAMP_LAUNCH_SPEED_FACTOR;
+        shakeTime = Math.max(shakeTime, 0.15);
+        r.hitCooldown = RAMP_COOLDOWN;
+      }
+    }
+  }
+
+  function updateAirborne(dt){
+    if (carAirY <= 0 && carVertVel === 0) return;
+    carVertVel -= GRAVITY * dt;
+    carAirY += carVertVel * dt;
+    if (carAirY <= 0){
+      carAirY = 0;
+      carVertVel = 0;
+      shakeTime = Math.max(shakeTime, 0.12); // a little thump on landing
+    }
+  }
+
   function updateCombat(dt){
     fireCooldownT = Math.max(0, fireCooldownT - dt);
     if (input.fire && fireCooldownT <= 0 && !localFinished && !exploded && running){
@@ -1663,8 +1894,19 @@
     prevSpeed = speed;
     var frozen = localFinished || exploded;
     var boost = catchUpBoost();
-    var effMaxSpeed = MAX_SPEED + boost;
-    var effAccel = ACCEL + boost*0.6;
+
+    // Nitro only ever drains -- it's never topped up automatically, only by
+    // driving through a pickup, so holding X is a real spend of something
+    // you had to go collect.
+    var usingNitro = !frozen && input.nitro && nitro > 0;
+    if (usingNitro){
+      nitro = Math.max(0, nitro - NITRO_DRAIN_PER_SEC*dt);
+      updateNitroBar();
+    }
+    nitroFillEl.classList.toggle('active', usingNitro);
+
+    var effMaxSpeed = MAX_SPEED + boost + (usingNitro ? NITRO_MAX_SPEED_BONUS : 0);
+    var effAccel = ACCEL + boost*0.6 + (usingNitro ? NITRO_ACCEL_BONUS : 0);
     if (frozen){
       speed = Math.max(0, speed - COAST_DRAG*1.4*dt);
     } else if (input.boost){
@@ -1749,14 +1991,22 @@
     // check before the final position is committed so a collision this frame
     // shoves laneOffset back out before the car is drawn overlapping it.
     if (!frozen) checkSceneryCollisions(dt, frame.x + px*laneOffset, frame.z + pz*laneOffset, px, pz);
+    if (!frozen) checkRamps(dt, worldDistance, laneOffset);
+    updateAirborne(dt);
+    checkNitroPickups(frame.x + px*laneOffset, frame.z + pz*laneOffset);
+    updatePickups(dt);
+    updateNitroParticles(dt, usingNitro && !frozen);
 
     var t = clock.elapsedTime;
     var bob = reduceMotion ? 0 : Math.sin(t*8) * 0.02 * Math.min(1.3, Math.abs(speed)/18);
 
-    car.position.set(frame.x + px*laneOffset, frame.y + 0.02 + bob, frame.z + pz*laneOffset);
+    car.position.set(frame.x + px*laneOffset, frame.y + 0.02 + bob + carAirY, frame.z + pz*laneOffset);
     var slope = slopeAt(worldDistance);
     car.rotation.y = -carHeading; // the car's own heading -- never tied to the road's, only to steering
-    car.rotation.x = reduceMotion ? 0 : Math.atan(slope) - accel*0.0035;
+    // Ramp jumps pitch the nose with vertical speed (up on launch, leveling
+    // out and dipping again just before touchdown) on top of the normal
+    // slope/accel pitch, so a stunt actually reads as one in the air.
+    car.rotation.x = reduceMotion ? 0 : Math.atan(slope) - accel*0.0035 - carVertVel*0.025;
     car.rotation.z = reduceMotion ? 0 : frame.bank - steerSmooth*0.12 + Math.sin(t*8)*0.01; // lean into the turn
 
     if (carKick > 0){
