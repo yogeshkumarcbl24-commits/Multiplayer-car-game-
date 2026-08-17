@@ -763,27 +763,21 @@
   var loadedCarModel = null; // the currently-attached real model, if any, so switching cars can remove the old one
   var carLoadToken = 0;      // bumped on every selection change, so a slow load that finishes after the user
                               // picked something else knows to discard its own result instead of attaching stale geometry
-  function loadSelectedCarModel(){
-    if (!(window.THREE && THREE.GLTFLoader)) return;
-    var def = null;
-    for (var i = 0; i < CAR_DEFS.length; i++) if (CAR_DEFS[i].id === selectedCarId) def = CAR_DEFS[i];
-    if (!def) def = CAR_DEFS[0];
-    var myToken = ++carLoadToken;
+  // Shared by the player's own car and any ghost car (the computer
+  // opponent, or a networked player) that wants a real model instead of
+  // its primitive placeholder -- fetches, scales to CAR_TARGET_LENGTH
+  // using the model's own longest axis, applies the per-car yaw fix if
+  // one's set, and grounds/centers it. Caller decides what to do with the
+  // fitted model (attach it, swap it in, etc.) and how to handle failure.
+  function fetchAndFitCarModel(def, onLoaded, onFailed){
+    if (!(window.THREE && THREE.GLTFLoader)){ if (onFailed) onFailed(); return; }
     var url = window[def.dataUriKey] || ('assets/models/' + def.file);
-    var card = document.querySelector('.car-card[data-car-id="' + def.id + '"]');
-    if (card) card.classList.add('loading');
-
     new THREE.GLTFLoader().load(url, function(gltf){
-      if (myToken !== carLoadToken) return; // a newer selection has already superseded this load
-      if (card) card.classList.remove('loading');
       var model = gltf.scene;
       model.traverse(function(o){
         if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; }
       });
 
-      // Scale to the target length using the model's own longest axis (not
-      // assuming which local axis is "length"), then re-measure afterward
-      // to get an accurate centered, ground-sitting offset.
       var box = new THREE.Box3().setFromObject(model);
       var size = box.getSize(new THREE.Vector3());
       var scale = CAR_TARGET_LENGTH / Math.max(size.x, size.y, size.z, 0.0001);
@@ -796,12 +790,28 @@
       model.position.x -= center.x;
       model.position.z -= center.z;
       model.position.y -= box.min.y;
+      onLoaded(model);
+    }, undefined, function(err){
+      if (onFailed) onFailed(err);
+    });
+  }
 
+  function loadSelectedCarModel(){
+    var def = null;
+    for (var i = 0; i < CAR_DEFS.length; i++) if (CAR_DEFS[i].id === selectedCarId) def = CAR_DEFS[i];
+    if (!def) def = CAR_DEFS[0];
+    var myToken = ++carLoadToken;
+    var card = document.querySelector('.car-card[data-car-id="' + def.id + '"]');
+    if (card) card.classList.add('loading');
+
+    fetchAndFitCarModel(def, function(model){
+      if (myToken !== carLoadToken) return; // a newer selection has already superseded this load
+      if (card) card.classList.remove('loading');
       if (loadedCarModel) car.remove(loadedCarModel);
       carPlaceholder.visible = false;
       car.add(model);
       loadedCarModel = model;
-    }, undefined, function(err){
+    }, function(err){
       if (myToken !== carLoadToken) return;
       if (card) card.classList.remove('loading');
       console.warn('Car model "' + def.name + '" failed to load -- using the built-in placeholder car instead.', err);
@@ -1414,6 +1424,14 @@
 
   function buildGhostCar(colorHex){
     var g = new THREE.Group();
+    // Every cosmetic body/wheel part lives in this sub-group, same idea as
+    // the player's own carPlaceholder -- if a real model loads for this
+    // ghost (see maybeLoadGhostCarModel), hiding placeholder swaps the
+    // whole primitive look out in one line. Gun/glow stay directly on `g`.
+    var placeholder = new THREE.Group();
+    g.add(placeholder);
+    g.userData.placeholder = placeholder;
+
     var bMat = new THREE.MeshPhysicalMaterial({ color: 0xd6dcec, roughness: 0.35, metalness: 0.4, clearcoat: 1.0, clearcoatRoughness: 0.12 });
     var tMat = new THREE.MeshStandardMaterial({ color: colorHex, emissive: new THREE.Color(colorHex), emissiveIntensity: 1.4, roughness: 0.3 });
     var gMat = new THREE.MeshStandardMaterial({ color: 0x0a0e22, roughness: 0.1, metalness: 0.8 });
@@ -1421,25 +1439,25 @@
 
     var body = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.42, 3.6), bMat);
     body.position.y = 0.5;
-    g.add(body);
+    placeholder.add(body);
     var cab = new THREE.Mesh(new THREE.BoxGeometry(1.22, 0.42, 1.55), gMat);
     cab.position.set(0, 0.88, -0.1);
     cab.rotation.x = -0.1;
-    g.add(cab);
+    placeholder.add(cab);
     [-1,1].forEach(function(side){
       var strip = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.06, 3.4), tMat);
       strip.position.set(side*0.87, 0.42, 0);
-      g.add(strip);
+      placeholder.add(strip);
       var tl = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.13, 0.06), tMat);
       tl.position.set(side*0.55, 0.6, 1.82);
-      g.add(tl);
+      placeholder.add(tl);
     });
     var wGeo = new THREE.CylinderGeometry(0.36, 0.36, 0.3, 12);
     [[-0.86,0.36,-1.15],[0.86,0.36,-1.15],[-0.86,0.36,1.25],[0.86,0.36,1.25]].forEach(function(p){
       var wheel = new THREE.Mesh(wGeo, wMat);
       wheel.rotation.z = Math.PI/2;
       wheel.position.set(p[0], p[1], p[2]);
-      g.add(wheel);
+      placeholder.add(wheel);
     });
     var glow = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 4.4), new THREE.MeshBasicMaterial({
       map: glowTex, color: colorHex, transparent:true, opacity:0.5,
@@ -1465,6 +1483,23 @@
 
     g.rotation.order = 'YXZ';
     return g;
+  }
+
+  // The computer opponent gets a real car model too, same swap-in as the
+  // player's own car -- just picked randomly per race instead of from the
+  // picker, since there's no "choice" for an AI to make. `group` is
+  // captured by reference and re-checked against the live remotePlayers
+  // entry when the load finishes, so a bot that's since been torn down
+  // (race restarted, etc.) doesn't get a model attached to an orphaned group.
+  function maybeLoadGhostCarModel(id, group){
+    var def = CAR_DEFS[Math.floor(Math.random() * CAR_DEFS.length)];
+    fetchAndFitCarModel(def, function(model){
+      if (!remotePlayers[id] || remotePlayers[id].group !== group) return;
+      if (group.userData.placeholder) group.userData.placeholder.visible = false;
+      group.add(model);
+    }, function(err){
+      console.warn('Ghost car model "' + def.name + '" failed to load -- using the built-in placeholder car instead.', err);
+    });
   }
 
   function makeNameTagTexture(name, colorHex){
@@ -1523,6 +1558,7 @@
       targetDist: 0, targetLane: 0, dispDist: 0, dispLane: 0, finished: false, finishTime: null,
       hitCooldown: 0, bumpCooldown: 0
     };
+    if (id === BOT_ID) maybeLoadGhostCarModel(id, group);
     return rp;
   }
 

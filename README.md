@@ -168,7 +168,16 @@ time; once every racer has finished (or a straggler timeout passes), a full
   only the `import`/`export` lines were touched, the loader body is stock.
   If a model or the loader fails to load for any reason, the primitive car
   is simply left in place — it's never a hard dependency for the game to
-  run.
+  run. The fetch-scale-ground logic itself lives in one shared
+  `fetchAndFitCarModel()`, reused by both the player's own car and any
+  ghost car (see below) that wants a real model too — one codepath, not
+  two copies to keep in sync.
+- **The computer opponent gets a real car too.** Ghost cars (`buildGhostCar`,
+  used for the computer opponent and any networked player) have the same
+  placeholder/real-model split as the player's own car. The computer
+  opponent picks a random one of the four cars each race
+  (`maybeLoadGhostCarModel`) rather than choosing from the picker, since
+  there's no real "choice" for an AI to make.
 - **Trees and grass are real models too, same pattern.** `assets/models/tree.glb`
   and `grass.glb` load the same way as the car. `buildPine()` just checks
   whether the tree model has loaded each time it's called — chunks already
