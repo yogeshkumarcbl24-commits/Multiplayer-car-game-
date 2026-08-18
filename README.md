@@ -127,16 +127,22 @@ time; once every racer has finished (or a straggler timeout passes), a full
   pivot — the same idea the placeholder car's own `frontWheelPivots`
   already used — so steering and rolling animate on independent axes
   instead of fighting over the same one. Which axis rolling actually spins
-  around is *detected*, not guessed: `detectAxleAxis()` measures each
-  wheel's own local geometry and picks whichever axis has the smallest
-  bounding-box extent (a tire is thin along its axle and round everywhere
-  else), rather than assuming every model authors wheels the same way —
-  an initial version assumed local Y for every wheel, which spun some
-  models' wheels flat like a coin instead of rolling; this is what fixed
-  that. `placeholderWheelSpin()` gives the primitive fallback car the same
-  rolling animation. A model with no separately-named wheel nodes (a
-  single fused body mesh) just keeps looking static, same as before this
-  existed — never a hard requirement.
+  around is *detected*, not guessed: `detectAxleAxisLocal()` measures each
+  wheel's world-space bounding box (a tire is thin along its axle and
+  round everywhere else) and converts that into the wheel's own local
+  rotation space by unrotating with its world quaternion, then spins it
+  each frame with `Object3D.rotateOnAxis()` — an incremental rotation, not
+  a "base rotation plus offset" reconstructed via `rotation.set()`, so it
+  composes correctly regardless of how many non-zero components the
+  wheel's authored rotation already has. An earlier version assumed every
+  wheel spins around local Y and measured extent in local mesh space
+  rather than world space; both assumptions broke down for real models
+  (wheels spinning flat like a coin, or not appearing to move at all) in
+  ways a single hardcoded car couldn't have caught. `placeholderWheelSpin()`
+  gives the primitive fallback car the same rolling animation. A model
+  with no separately-named wheel nodes (a single fused body mesh) just
+  keeps looking static, same as before this existed — never a hard
+  requirement.
 - **The road itself curves and climbs.** `curvatureAt(s)` and
   `elevationAt(s)` (in `js/main.js`) are small sums of sine waves in terms of
   distance-traveled `s`. Each frame, the car's heading is integrated forward

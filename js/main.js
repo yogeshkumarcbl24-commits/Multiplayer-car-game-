@@ -805,26 +805,28 @@
     return pivot;
   }
 
-  // A tire mesh is thin along its own axle and round (roughly equal
-  // extent) in the other two directions -- so the axle axis, in the
-  // mesh's own local/object space (unaffected by whatever rotation the
-  // node happens to be authored with), is whichever axis has the
-  // smallest bounding-box extent. Detecting it from actual geometry like
-  // this is what fixes rolling looking like a flat coin-spin instead of
-  // rolling forward: guessing a fixed axis (every wheel node rotates
-  // around local Y) assumes every model authors wheels the same way, and
-  // it doesn't hold for every model.
-  function detectAxleAxis(node){
-    var mesh = node.isMesh ? node : null;
-    if (!mesh) node.traverse(function(o){ if (!mesh && o.isMesh) mesh = o; });
-    if (!mesh || !mesh.geometry) return 'y'; // nothing to measure -- keep the old guess as a last resort
-    var geo = mesh.geometry;
-    if (!geo.boundingBox) geo.computeBoundingBox();
-    var b = geo.boundingBox;
-    var ext = { x: b.max.x - b.min.x, y: b.max.y - b.min.y, z: b.max.z - b.min.z };
-    if (ext.x <= ext.y && ext.x <= ext.z) return 'x';
-    if (ext.y <= ext.x && ext.y <= ext.z) return 'y';
-    return 'z';
+  // A tire is thin along its own axle and round (roughly equal extent) in
+  // the other two directions -- so the axle direction is whichever axis
+  // has the smallest bounding-box extent. Measured here in WORLD space
+  // (Box3().setFromObject already walks every transform between the node
+  // and the world, including any rotated mesh nested inside a differently-
+  // oriented wrapper group), then converted into the node's own LOCAL
+  // space by unrotating with its world quaternion -- that local vector is
+  // exactly what Object3D.rotateOnAxis() expects, and unlike setting
+  // rotation.x/y/z directly it composes correctly no matter how many
+  // non-zero components the node's authored rotation already has.
+  // Measuring in local mesh space and assuming it lines up with the
+  // node's own rotation space was the earlier, fragile version of this;
+  // this doesn't depend on that assumption at all.
+  function detectAxleAxisLocal(node){
+    var box = new THREE.Box3().setFromObject(node);
+    var size = box.getSize(new THREE.Vector3());
+    var worldAxis = new THREE.Vector3(1, 0, 0);
+    if (size.y <= size.x && size.y <= size.z) worldAxis.set(0, 1, 0);
+    else if (size.z <= size.x && size.z <= size.y) worldAxis.set(0, 0, 1);
+    var worldQuat = new THREE.Quaternion();
+    node.getWorldQuaternion(worldQuat);
+    return worldAxis.applyQuaternion(worldQuat.invert()).normalize();
   }
 
   function findCarWheels(model){
@@ -842,8 +844,7 @@
     candidates.forEach(function(c){
       var frontKey = c.pos.z < centerZ ? 'front' : 'rear'; // this game's forward is -Z
       var sideKey = c.pos.x < 0 ? 'Left' : 'Right';
-      c.node.userData.baseRotation = c.node.rotation.clone(); // preserve however this wheel was originally authored
-      c.node.userData.spinAxis = detectAxleAxis(c.node);
+      c.node.userData.spinAxis = detectAxleAxisLocal(c.node); // capture before any reparenting below
       if (frontKey === 'front'){
         wheels[sideKey === 'Left' ? 'frontLeftPivot' : 'frontRightPivot'] = riggedSteerPivot(c.node);
       }
@@ -853,19 +854,16 @@
   }
 
   // Called each frame for any car (player or ghost) whose loaded model had
-  // real wheels findCarWheels could identify. Rolling spin applies to
-  // each wheel's own detected axle axis (see detectAxleAxis) rather than
-  // a fixed guess; steering only touches the two front pivots,
-  // independently of whatever axis rolling uses.
-  function animateCarModelWheels(wheels, spinAngle, steerAngle){
+  // real wheels findCarWheels could identify. spinDelta is this frame's
+  // incremental rolling rotation (not an accumulated total) -- rotateOnAxis
+  // spins the wheel from wherever it currently is, around its own detected
+  // axle axis, so there's no "base rotation" bookkeeping to get wrong.
+  // Steering only touches the two front pivots, independently.
+  function animateCarModelWheels(wheels, spinDelta, steerAngle){
     if (!wheels) return;
     ['frontLeft', 'frontRight', 'rearLeft', 'rearRight'].forEach(function(key){
       var node = wheels[key];
-      if (!node) return;
-      var base = node.userData.baseRotation;
-      var rot = { x: base.x, y: base.y, z: base.z };
-      rot[node.userData.spinAxis] += spinAngle;
-      node.rotation.set(rot.x, rot.y, rot.z);
+      if (node) node.rotateOnAxis(node.userData.spinAxis, spinDelta);
     });
     if (wheels.frontLeftPivot) wheels.frontLeftPivot.rotation.y = steerAngle;
     if (wheels.frontRightPivot) wheels.frontRightPivot.rotation.y = steerAngle;
@@ -2294,9 +2292,10 @@
     // Rolling: every wheel actually turns with distance traveled now,
     // placeholder or real model -- previously nothing spun at all, only
     // the front wheels' steering angle was ever animated.
-    wheelSpinAngle += (speed / WHEEL_RADIUS) * dt;
+    var wheelSpinDelta = (speed / WHEEL_RADIUS) * dt;
+    wheelSpinAngle += wheelSpinDelta;
     placeholderWheelSpin(wheelSpinAngle);
-    if (loadedCarModel) animateCarModelWheels(loadedCarModel.userData.wheels, wheelSpinAngle, steerAngle);
+    if (loadedCarModel) animateCarModelWheels(loadedCarModel.userData.wheels, wheelSpinDelta, steerAngle);
 
     if (speed > 0.5){
       // Real slip-angle tire model: front/rear cornering force from how
