@@ -792,9 +792,10 @@
   // Wraps a wheel node in its own steering pivot, sibling to wherever it
   // already lives in the model's hierarchy -- exactly the placeholder
   // car's own frontWheelPivots idea, so steering (the pivot's rotation.y)
-  // and rolling (the wheel's own rotation.y, independent since a child's
-  // local rotation doesn't inherit its parent's) can each own their own
-  // axis instead of fighting over the same one.
+  // and rolling (the wheel's own rotation, on whichever axis is actually
+  // its axle -- see detectAxleAxis -- independent since a child's local
+  // rotation doesn't inherit its parent's) can each own their own axis
+  // instead of fighting over the same one.
   function riggedSteerPivot(wheelNode){
     var pivot = new THREE.Group();
     pivot.position.copy(wheelNode.position);
@@ -802,6 +803,28 @@
     pivot.add(wheelNode);
     wheelNode.position.set(0, 0, 0);
     return pivot;
+  }
+
+  // A tire mesh is thin along its own axle and round (roughly equal
+  // extent) in the other two directions -- so the axle axis, in the
+  // mesh's own local/object space (unaffected by whatever rotation the
+  // node happens to be authored with), is whichever axis has the
+  // smallest bounding-box extent. Detecting it from actual geometry like
+  // this is what fixes rolling looking like a flat coin-spin instead of
+  // rolling forward: guessing a fixed axis (every wheel node rotates
+  // around local Y) assumes every model authors wheels the same way, and
+  // it doesn't hold for every model.
+  function detectAxleAxis(node){
+    var mesh = node.isMesh ? node : null;
+    if (!mesh) node.traverse(function(o){ if (!mesh && o.isMesh) mesh = o; });
+    if (!mesh || !mesh.geometry) return 'y'; // nothing to measure -- keep the old guess as a last resort
+    var geo = mesh.geometry;
+    if (!geo.boundingBox) geo.computeBoundingBox();
+    var b = geo.boundingBox;
+    var ext = { x: b.max.x - b.min.x, y: b.max.y - b.min.y, z: b.max.z - b.min.z };
+    if (ext.x <= ext.y && ext.x <= ext.z) return 'x';
+    if (ext.y <= ext.x && ext.y <= ext.z) return 'y';
+    return 'z';
   }
 
   function findCarWheels(model){
@@ -820,6 +843,7 @@
       var frontKey = c.pos.z < centerZ ? 'front' : 'rear'; // this game's forward is -Z
       var sideKey = c.pos.x < 0 ? 'Left' : 'Right';
       c.node.userData.baseRotation = c.node.rotation.clone(); // preserve however this wheel was originally authored
+      c.node.userData.spinAxis = detectAxleAxis(c.node);
       if (frontKey === 'front'){
         wheels[sideKey === 'Left' ? 'frontLeftPivot' : 'frontRightPivot'] = riggedSteerPivot(c.node);
       }
@@ -830,18 +854,18 @@
 
   // Called each frame for any car (player or ghost) whose loaded model had
   // real wheels findCarWheels could identify. Rolling spin applies to
-  // rotation.y on every wheel found (see the placeholder's own
-  // placeholderWheelSpin for why that's the correct axis -- same assumed
-  // convention here, a reasonable default for how these models are
-  // authored, not a guarantee for every possible model); steering only
-  // touches the two front pivots, independently.
+  // each wheel's own detected axle axis (see detectAxleAxis) rather than
+  // a fixed guess; steering only touches the two front pivots,
+  // independently of whatever axis rolling uses.
   function animateCarModelWheels(wheels, spinAngle, steerAngle){
     if (!wheels) return;
     ['frontLeft', 'frontRight', 'rearLeft', 'rearRight'].forEach(function(key){
       var node = wheels[key];
       if (!node) return;
       var base = node.userData.baseRotation;
-      node.rotation.set(base.x, base.y + spinAngle, base.z);
+      var rot = { x: base.x, y: base.y, z: base.z };
+      rot[node.userData.spinAxis] += spinAngle;
+      node.rotation.set(rot.x, rot.y, rot.z);
     });
     if (wheels.frontLeftPivot) wheels.frontLeftPivot.rotation.y = steerAngle;
     if (wheels.frontRightPivot) wheels.frontRightPivot.rotation.y = steerAngle;
