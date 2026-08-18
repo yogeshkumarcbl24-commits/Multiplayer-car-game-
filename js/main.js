@@ -1241,6 +1241,7 @@
   var carHeading = 0; // the car's own facing angle -- changes ONLY from steering input, never auto-follows the road's curve
   var yawRate = 0;    // how fast carHeading is currently rotating, rad/sec -- driven by tire forces, see CAR PHYSICS below
   var lastLongAccel = 0; // previous frame's forward accel, m/s^2-ish -- used one frame stale for weight transfer, plenty stable for this
+  var lastLatAccel = 0;  // previous frame's lateral (cornering) accel -- same one-frame-stale trick, for lateral/roll weight transfer
   var wheelSpinAngle = 0; // accumulated rolling rotation for any real car model's real wheel nodes -- see findCarWheels
   var WHEEL_RADIUS = 0.35; // world units -- how fast that spin looks for a given speed
   var TURN_RATE = 1.5; // rad/sec of turn at full steer -- only used as a low-speed/reverse fallback now, see CAR PHYSICS
@@ -1263,6 +1264,12 @@
   var CG_TO_FRONT = 1.15;             // b: center of gravity to front axle
   var CG_TO_REAR = WHEELBASE - CG_TO_FRONT; // c
   var CG_HEIGHT = 0.55;                // h -- modest on purpose: noticeable weight transfer, not wild
+  var TRACK_WIDTH = 1.6;               // distance between left and right wheels -- for lateral (cornering) weight transfer
+  var TIRE_LOAD_SENSITIVITY = 0.92;    // <1: real tires give back less than proportional grip as load increases, so
+                                         // shifting load from the inside to the outside wheel in a corner (see
+                                         // axleGripCap) is a net grip loss, not a wash, even though the axle's total
+                                         // load doesn't change -- https://www.allenbergracingschools.com/expert-advice/
+                                         // physics-racing-part-1-weight-transfer/ (longitudinal case; same idea sideways)
   var YAW_INERTIA = CAR_MASS * WHEELBASE * WHEELBASE / 12 * 1.5; // solid-rod approximation, scaled up a bit --
                                                                    // pure bicycle-model inertia turned out twitchier
                                                                    // than it should for everyday steering
@@ -1282,6 +1289,36 @@
                                           // holding brake at a standstill shifts into this instead of reusing full brake force
   var DRAG_COEF = 20;                   // quadratic air drag -- dominates at speed; this (not a hard clamp) is what caps top speed now
   var ROLL_COEF = 30;                   // linear rolling resistance -- matters most at low speed
+
+  // An axle's max lateral grip, given its static (straight-line) load and
+  // how much of that load has rolled from the inside wheel to the outside
+  // one this frame (rollShift, from lateral weight transfer). The
+  // exponent is applied to outside/inside *relative to an even split*
+  // (each wheel's share vs. half the axle's static load), not to the raw
+  // load values directly -- raw loads here are in the thousands of
+  // newtons, and pow(thousands, 0.92) crushes the result by roughly half
+  // regardless of rollShift, which would silently nuke baseline grip even
+  // at rollShift=0. Normalizing this way means the formula reduces to
+  // exactly staticLoad*mu (the old flat behavior) when rollShift is 0,
+  // and only rolls off from there as weight actually shifts -- the
+  // outside wheel's extra load doesn't earn back proportionally more
+  // grip, so a hard corner costs the axle real grip even though its
+  // total load never changed, the "weight transfer isn't free" point the
+  // linked article makes for the longitudinal (front/rear) case.
+  function axleGripCap(staticLoad, rollShift, mu){
+    var half = staticLoad / 2;
+    if (half <= 0) return 0;
+    // Capped at `half` -- can't shift more than fully unloading one wheel.
+    // Without this, extreme enough (if unrealistic) lateral accel pushes
+    // "outside" past 2x its normal share, and since pow(x,0.92) for x>1
+    // still grows (just sub-linearly), the total would start climbing
+    // back up past that point instead of bottoming out -- i.e. grip
+    // would eventually read as *higher* than a moderate slide, backwards.
+    var shift = Math.min(Math.abs(rollShift), half);
+    var outside = half + shift;
+    var inside = half - shift;
+    return mu * half * (Math.pow(outside / half, TIRE_LOAD_SENSITIVITY) + Math.pow(inside / half, TIRE_LOAD_SENSITIVITY));
+  }
 
   window.addEventListener('keydown', function(e){
     if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') input.left = true;
@@ -1733,7 +1770,7 @@
   ============================================================ */
   function resetRacePhysics(){
     worldDistance = 0; localFinished = false; myFinishTime = null;
-    steerSmooth = 0; lateralVelocity = 0; carHeading = 0; yawRate = 0; lastLongAccel = 0;
+    steerSmooth = 0; lateralVelocity = 0; carHeading = 0; yawRate = 0; lastLongAccel = 0; lastLatAccel = 0;
     carAirY = 0; carVertVel = 0;
     nitro = 0; updateNitroBar();
     finishToastEl.hidden = true;
@@ -2082,6 +2119,7 @@
       lateralVelocity = 0;
       yawRate = 0;
       lastLongAccel = 0;
+      lastLatAccel = 0;
       steerSmooth = 0;
       carHeading = sampleAt(worldDistance).heading;
       carAirY = 0;
@@ -2315,23 +2353,35 @@
       var slipF = delta - Math.atan2(vfLat, vLongForSlip);
       var slipR = -Math.atan2(vrLat, vLongForSlip);
 
-      // Weight transfer (one-frame-stale accel, plenty stable for this):
-      // accelerating shifts load rearward (less front grip), braking
-      // shifts it forward -- real understeer/oversteer, not a fixed feel.
+      // Longitudinal weight transfer (one-frame-stale accel, plenty stable
+      // for this): accelerating shifts load rearward (less front grip),
+      // braking shifts it forward -- real understeer/oversteer, not a
+      // fixed feel. Front+rear always sums back to the car's total
+      // weight (Lf+Lr=G, conserved) -- only the split between them moves.
       var staticWf = (CG_TO_REAR / WHEELBASE) * CAR_MASS * 9.8;
       var staticWr = (CG_TO_FRONT / WHEELBASE) * CAR_MASS * 9.8;
       var weightShift = (CG_HEIGHT / WHEELBASE) * CAR_MASS * lastLongAccel;
       var wf = Math.max(0, staticWf - weightShift);
       var wr = Math.max(0, staticWr + weightShift);
 
-      var latF = Math.max(-wf * TIRE_GRIP_MU, Math.min(wf * TIRE_GRIP_MU, CORNERING_STIFFNESS_F * slipF));
-      var latR = Math.max(-wr * TIRE_GRIP_MU, Math.min(wr * TIRE_GRIP_MU, CORNERING_STIFFNESS_R * slipR));
+      // Lateral (roll) weight transfer: cornering shifts load from the
+      // inside wheel to the outside one at each axle. That doesn't change
+      // either axle's total load, but axleGripCap's tire-load-sensitivity
+      // curve means it still costs real grip -- push a corner harder and
+      // the axle gets net weaker, not just differently loaded.
+      var rollShift = (CG_HEIGHT / TRACK_WIDTH) * CAR_MASS * lastLatAccel;
+      var maxLatF = axleGripCap(wf, rollShift, TIRE_GRIP_MU);
+      var maxLatR = axleGripCap(wr, rollShift, TIRE_GRIP_MU);
+
+      var latF = Math.max(-maxLatF, Math.min(maxLatF, CORNERING_STIFFNESS_F * slipF));
+      var latR = Math.max(-maxLatR, Math.min(maxLatR, CORNERING_STIFFNESS_R * slipR));
 
       var yawTorque = Math.cos(delta) * latF * CG_TO_FRONT - latR * CG_TO_REAR;
       yawRate += (yawTorque / YAW_INERTIA - YAW_DAMPING * yawRate) * dt;
 
       var corneringForce = latR + Math.cos(delta) * latF;
       lateralVelocity += (corneringForce / CAR_MASS - speed * yawRate) * dt;
+      lastLatAccel = corneringForce / CAR_MASS;
     } else {
       // Too slow (or reversing) for the slip-angle model to behave well --
       // atan2 against a near-zero longitudinal speed is unstable, and this
@@ -2341,6 +2391,7 @@
       var turnDir = speed < -0.05 ? -1 : 1;
       yawRate = turnDir * steerSmooth * TURN_RATE * 0.6;
       lateralVelocity *= Math.max(0, 1 - dt*6); // settle out quickly, no tire physics driving it at a standstill
+      lastLatAccel = 0; // no cornering force being generated down here, so no roll to hang onto either
     }
     // The car's facing direction is still free-running -- it only changes
     // from these forces, and otherwise holds wherever it was last pointed

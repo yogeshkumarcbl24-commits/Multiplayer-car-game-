@@ -118,6 +118,34 @@ time; once every racer has finished (or a straggler timeout passes), a full
   stopped shifts into a dedicated, gentler `REVERSE_FORCE` instead of
   reusing full brake strength — backing up shouldn't feel like slamming
   the brakes.
+- **Cornering hard costs grip too, not just accel/braking.** The first
+  physics pass only shifted weight front/rear (under gas/brake); it did not
+  model the sideways roll transfer a real car feels between its inside and
+  outside wheels mid-corner, the effect covered in
+  https://www.allenbergracingschools.com/expert-advice/physics-racing-part-1-weight-transfer/.
+  `axleGripCap()` (`js/main.js`) adds that: `rollShift` estimates how much
+  load moves from the inside wheel to the outside one from `CG_HEIGHT`,
+  `TRACK_WIDTH`, and the car's own lateral acceleration (`lastLatAccel`,
+  captured from the previous frame's cornering force), then splits each
+  axle's static load into outside/inside halves shifted by that amount. Tire
+  grip is not linear in load — a tire that is loaded twice as hard does not
+  grip twice as hard — so each half's contribution is raised to
+  `TIRE_LOAD_SENSITIVITY` (0.92, just under 1) before being summed back into
+  that axle's total grip cap; the net effect is that an axle rolling hard
+  onto its outside wheel always has less total grip available than the same
+  axle sitting flat, even at the same total load, matching the article's
+  point that weight transfer is not free. Two bugs got caught before this
+  shipped, both via a standalone `node -e` numeric check rather than the
+  browser (plugging in real load values by hand is a lot easier to verify
+  than eyeballing in-game feel): raising the *raw* load values (in the
+  thousands of newtons) to that exponent crushed grip by roughly half even
+  at zero roll shift, because the exponent needs to operate on a ratio near
+  1.0, not a raw large number — fixed by normalizing each half against the
+  axle's un-shifted half-load first, so the formula reduces to exactly the
+  old flat baseline when `rollShift` is zero; and without clamping
+  `rollShift` to the point where the inside wheel is fully unloaded, extreme
+  lateral acceleration made grip start climbing back up instead of
+  continuing to fall, which is backwards, fixed with a `Math.min` clamp.
 - **Wheels actually turn now — rolling and steering both.** Previously
   nothing on the car ever spun; only the front wheels' steering angle was
   animated. `findCarWheels()` (`js/main.js`) looks for any node whose name
